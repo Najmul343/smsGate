@@ -231,8 +231,8 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
 
   // Send directly
   const handleSendLiveGrid = () => {
-    const validNumbers = validRows.map((r) => r.normalizedPhone);
-    if (!validNumbers.length) {
+    const validItems = validRows.map((r) => ({ phone: r.normalizedPhone, name: r.name }));
+    if (!validItems.length) {
       alert('Grid contains no valid numbers to send.');
       return;
     }
@@ -242,8 +242,8 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
     }
 
     onSaveLastMessage(messageText);
-    const summary = onSplitAndStart(validNumbers, messageText, selectedAccounts);
-    setActionSummary(`🚀 Dispatched ${validNumbers.length} numbers across ${summary.length} active device(s)!`);
+    const summary = onSplitAndStart(validItems, messageText, selectedAccounts);
+    setActionSummary(`🚀 Dispatched ${validItems.length} numbers across ${summary.length} active device(s)!`);
   };
 
   return (

@@ -128,7 +128,7 @@ export function getTabStats(records: SmsRecord[], assignedApi: string) {
 
 export function insertNumbers(
   records: SmsRecord[],
-  numbers: string[],
+  numbers: (string | { phone: string; name?: string })[],
   assignedApi: string
 ): { updatedRecords: SmsRecord[]; newCount: number; skippedCount: number } {
   const existingPhoneMap = new Map<string, SmsRecord>();
@@ -138,10 +138,14 @@ export function insertNumbers(
   let newCount = 0;
   let skippedCount = 0;
 
-  numbers.forEach((num) => {
+  numbers.forEach((item) => {
+    const num = typeof item === 'string' ? item : item.phone;
+    const nameVal = typeof item === 'string' ? undefined : item.name;
+
     if (!existingPhoneMap.has(num)) {
       const newRec: SmsRecord = {
         phone: num,
+        name: nameVal,
         status: 'PENDING',
         attempts: 0,
         last_error: '',
@@ -156,6 +160,10 @@ export function insertNumbers(
       existingPhoneMap.set(num, newRec);
       newCount++;
     } else {
+      const existing = existingPhoneMap.get(num)!;
+      if (nameVal && !existing.name) {
+        existing.name = nameVal;
+      }
       skippedCount++;
     }
   });
@@ -166,7 +174,7 @@ export function insertNumbers(
 
 export function splitAndStartAll(
   records: SmsRecord[],
-  numbers: string[],
+  numbers: (string | { phone: string; name?: string })[],
   message: string,
   activeAccounts: { user: string; pwd: string }[]
 ): { updatedRecords: SmsRecord[]; summary: { account: string; newCount: number; movedCount: number }[] } {
@@ -177,9 +185,14 @@ export function splitAndStartAll(
   const existingMap = new Map<string, SmsRecord>();
   records.forEach((r) => existingMap.set(r.phone, r));
 
+  // Extract objects or strings
+  const items = numbers.map((item) =>
+    typeof item === 'string' ? { phone: item, name: undefined } : item
+  );
+
   // Only redistributable if not already SUCCESS
-  const redistributable = numbers.filter((n) => {
-    const rec = existingMap.get(n);
+  const redistributable = items.filter((item) => {
+    const rec = existingMap.get(item.phone);
     return !rec || rec.status !== 'SUCCESS';
   });
 
@@ -192,11 +205,12 @@ export function splitAndStartAll(
     let newCount = 0;
     let movedCount = 0;
 
-    chunk.forEach((num) => {
-      const existing = existingMap.get(num);
+    chunk.forEach((item) => {
+      const existing = existingMap.get(item.phone);
       if (!existing) {
         const newRec: SmsRecord = {
-          phone: num,
+          phone: item.phone,
+          name: item.name,
           status: 'PENDING',
           attempts: 0,
           last_error: '',
@@ -208,11 +222,13 @@ export function splitAndStartAll(
           auto_retry_count: 0,
         };
         records.push(newRec);
-        existingMap.set(num, newRec);
+        existingMap.set(item.phone, newRec);
         newCount++;
       } else if (existing.status !== 'SUCCESS') {
         existing.assigned_api = acc.user;
         existing.status = 'PENDING';
+        if (item.name) existing.name = item.name;
+        if (message) existing.message_sent = message;
         movedCount++;
       }
     });

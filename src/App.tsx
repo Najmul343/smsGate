@@ -406,17 +406,20 @@ export function App() {
                 const targetAccs = activeAccounts.filter((a) => targetAccountUsers.includes(a.user));
                 if (!targetAccs.length) return [];
 
-                // Redistribute & Start
+                const items = numbers.map((item) =>
+                  typeof item === 'string' ? { phone: item, name: undefined } : item
+                );
+
                 const existingMap = new Map<string, SmsRecord>();
                 records.forEach((r) => existingMap.set(r.phone, r));
 
-                const redistributable = numbers.filter((n) => {
-                  const rec = existingMap.get(n);
+                const redistributable = items.filter((item) => {
+                  const rec = existingMap.get(item.phone);
                   return !rec || rec.status !== 'SUCCESS';
                 });
 
                 const nAccounts = targetAccs.length;
-                const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+                const now = getLocalTimestamp();
                 const summary: { account: string; newCount: number; movedCount: number }[] = [];
 
                 const updatedRecords = [...records];
@@ -426,11 +429,12 @@ export function App() {
                   let newCount = 0;
                   let movedCount = 0;
 
-                  chunk.forEach((num) => {
-                    const existing = updatedRecords.find((r) => r.phone === num);
+                  chunk.forEach((item) => {
+                    const existing = updatedRecords.find((r) => r.phone === item.phone);
                     if (!existing) {
                       updatedRecords.push({
-                        phone: num,
+                        phone: item.phone,
+                        name: item.name,
                         status: 'PENDING',
                         attempts: 0,
                         last_error: '',
@@ -445,6 +449,8 @@ export function App() {
                     } else if (existing.status !== 'SUCCESS') {
                       existing.assigned_api = acc.user;
                       existing.status = 'PENDING';
+                      if (item.name) existing.name = item.name;
+                      if (msg) existing.message_sent = msg;
                       movedCount++;
                     }
                   });

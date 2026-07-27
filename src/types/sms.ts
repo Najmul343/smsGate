@@ -6,6 +6,7 @@ export interface SmsAccount {
 
 export interface SmsRecord {
   phone: string;
+  name?: string;
   status: 'PENDING' | 'SUCCESS' | 'FAILED';
   attempts: number;
   last_error: string;
