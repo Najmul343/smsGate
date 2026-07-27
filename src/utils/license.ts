@@ -1,17 +1,17 @@
 import { LicenseData } from '../types/sms';
 
 export const HARDCODED_KEYS: Record<string, number> = {
-  'TRIAL-1234-ABCD': 7,
-  'TRIAL-9876-ZYXW': 7,
-  'PRO-AAAA-BBBB': 30,
-  'PRO-CCCC-DDDD': 30,
-  'PRO-YOUR-NAME': 30,
+  'TRIAL-17741-ABCD': 2,
+  'TRIAL-2563-ABCD': 2,
+  'NAJMUL-WORK-2026': 365,
+  'PRO-AAAA-BBBB': 365,
+  'PRO-NAJAM-1111': 365,
 };
 
 const LICENSE_STORAGE_KEY = '.sms_sys_data';
 
 export interface LicenseStatus {
-  isValid: boolean | null; // null = unlocked required, false = expired, true = active
+  isValid: boolean | null; // null = unlock required, false = expired, true = active
   daysLeft: number;
   activeKey: string;
 }
@@ -26,7 +26,7 @@ export function checkLicense(): LicenseStatus {
     const data: LicenseData = JSON.parse(raw);
     const activeKey = data.key || '';
     const activatedOn = new Date(data.date);
-    const daysAllowed = data.days || 0;
+    const daysAllowed = data.days || 365;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -46,11 +46,11 @@ export function checkLicense(): LicenseStatus {
   }
 }
 
-export function saveLicense(key: string, days: number): boolean {
+export function saveLicense(key: string, days: number = 365): boolean {
   try {
     const todayStr = new Date().toISOString().split('T')[0];
     const data: LicenseData = {
-      key,
+      key: key.trim().toUpperCase(),
       date: todayStr,
       days,
     };
@@ -60,3 +60,4 @@ export function saveLicense(key: string, days: number): boolean {
     return false;
   }
 }
+

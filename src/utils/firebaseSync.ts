@@ -1,0 +1,137 @@
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, doc, getDoc, setDoc, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import { SmsRecord, SavedFolder, RunSettings, SmsAccount } from '../types/sms';
+import firebaseConfig from '../../firebase-applet-config.json';
+
+// Initialize Firebase App
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+
+// Use specified custom Firestore database ID if provided, otherwise default
+export const db = firebaseConfig.firestoreDatabaseId
+  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(app);
+
+export interface WorkspaceData {
+  licenseKey: string;
+  accountsText?: string;
+  accounts?: SmsAccount[];
+  records?: SmsRecord[];
+  folders?: SavedFolder[];
+  settings?: RunSettings;
+  lastMessage?: string;
+  updatedAt?: string;
+}
+
+const LICENSE_KEY_STORAGE_KEY = 'app_license_key_active';
+
+export function getActiveLicenseKey(): string {
+  try {
+    return localStorage.getItem(LICENSE_KEY_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setActiveLicenseKey(key: string): void {
+  try {
+    if (key) {
+      localStorage.setItem(LICENSE_KEY_STORAGE_KEY, key.trim());
+    } else {
+      localStorage.removeItem(LICENSE_KEY_STORAGE_KEY);
+    }
+  } catch (err) {
+    console.error('Failed to save license key:', err);
+  }
+}
+
+/**
+ * Fetch full workspace data from cloud Firestore for a given license key.
+ */
+export async function fetchCloudWorkspace(licenseKey: string): Promise<WorkspaceData | null> {
+  const cleanKey = licenseKey.trim().toUpperCase();
+  if (!cleanKey) return null;
+
+  try {
+    const docRef = doc(db, 'license_data', cleanKey);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as WorkspaceData;
+    }
+    return null;
+  } catch (err) {
+    console.error('Error fetching workspace from cloud:', err);
+    return null;
+  }
+}
+
+/**
+ * Save workspace data to cloud Firestore for a given license key.
+ */
+export async function saveCloudWorkspace(licenseKey: string, data: Partial<WorkspaceData>): Promise<boolean> {
+  const cleanKey = licenseKey.trim().toUpperCase();
+  if (!cleanKey) return false;
+
+  try {
+    const docRef = doc(db, 'license_data', cleanKey);
+    const payload: WorkspaceData = {
+      licenseKey: cleanKey,
+      accountsText: data.accountsText || '',
+      accounts: data.accounts || [],
+      records: data.records || [],
+      folders: data.folders || [],
+      settings: data.settings || {
+        dailyLimit: 180,
+        delayMin: 5,
+        delayMax: 8,
+        batchSize: 10,
+        batchPause: 120,
+        maxRetries: 3,
+        autoMode: true,
+        scheduleEnabled: false,
+        scheduleTime: '10:00',
+        scheduleDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        scheduleOnlyOnline: true,
+        scheduleMessage: '',
+        scheduleCount: 50,
+        lastScheduleRun: '',
+      },
+      lastMessage: data.lastMessage || '',
+      updatedAt: new Date().toISOString(),
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+    return true;
+  } catch (err) {
+    console.error('Error saving workspace to cloud:', err);
+    return false;
+  }
+}
+
+/**
+ * Subscribe to real-time changes in Firestore for a given license key.
+ */
+export function subscribeCloudWorkspace(
+  licenseKey: string,
+  onDataChange: (data: WorkspaceData) => void
+): Unsubscribe | null {
+  const cleanKey = licenseKey.trim().toUpperCase();
+  if (!cleanKey) return null;
+
+  try {
+    const docRef = doc(db, 'license_data', cleanKey);
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        if (snap.exists()) {
+          onDataChange(snap.data() as WorkspaceData);
+        }
+      },
+      (error) => {
+        console.error('Firestore real-time subscription error:', error);
+      }
+    );
+  } catch (err) {
+    console.error('Error subscribing to cloud workspace:', err);
+    return null;
+  }
+}

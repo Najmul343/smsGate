@@ -11,7 +11,15 @@ import {
   getTodaysSuccessCount,
   getLocalTimestamp,
   getLocalDateString,
+  loadSavedFolders,
+  saveSavedFolders,
 } from './utils/dbStore';
+import {
+  fetchCloudWorkspace,
+  saveCloudWorkspace,
+  subscribeCloudWorkspace,
+  setActiveLicenseKey,
+} from './utils/firebaseSync';
 import { LicenseModal } from './components/LicenseModal';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -24,6 +32,7 @@ import { VercelInspectorTab } from './components/VercelInspectorTab';
 export function App() {
   // License state
   const [licenseInfo, setLicenseInfo] = useState(checkLicense());
+  const [showLicenseModal, setShowLicenseModal] = useState(false);
 
   // Records & Control state
   const [records, setRecords] = useState<SmsRecord[]>(loadRecords());
@@ -56,6 +65,100 @@ export function App() {
     scheduleCount: Number(getSetting('sched_count', '50')),
     lastScheduleRun: getSetting('last_sched_run', ''),
   });
+
+  // Remote update flag to prevent echo loops
+  const isRemoteUpdateRef = useRef(false);
+
+  // License Key & Firebase Cloud Sync Engine
+  useEffect(() => {
+    if (!licenseInfo.isValid || !licenseInfo.activeKey) return;
+
+    const key = licenseInfo.activeKey.trim().toUpperCase();
+    setActiveLicenseKey(key);
+
+    // Fetch initial workspace state from Cloud Firestore
+    fetchCloudWorkspace(key).then((cloud) => {
+      if (cloud) {
+        isRemoteUpdateRef.current = true;
+        if (cloud.accountsText !== undefined) {
+          setAccountsText(cloud.accountsText);
+          setSetting('accounts_text', cloud.accountsText);
+        }
+        if (cloud.records && Array.isArray(cloud.records)) {
+          setRecords(cloud.records);
+          saveRecords(cloud.records);
+        }
+        if (cloud.folders && Array.isArray(cloud.folders)) {
+          saveSavedFolders(cloud.folders);
+        }
+        if (cloud.settings) {
+          setSettings((prev) => ({ ...prev, ...cloud.settings }));
+        }
+        if (cloud.lastMessage) {
+          setLastMessage(cloud.lastMessage);
+          setSetting('last_message', cloud.lastMessage);
+        }
+      } else {
+        // Upload initial local state to Firestore cloud
+        saveCloudWorkspace(key, {
+          accountsText,
+          records,
+          folders: loadSavedFolders(),
+          settings,
+          lastMessage,
+        });
+      }
+    });
+
+    // Subscribe to live Firestore snapshot updates across devices
+    const unsub = subscribeCloudWorkspace(key, (cloud) => {
+      if (!cloud) return;
+      isRemoteUpdateRef.current = true;
+      if (cloud.accountsText !== undefined) {
+        setAccountsText(cloud.accountsText);
+        setSetting('accounts_text', cloud.accountsText);
+      }
+      if (cloud.records && Array.isArray(cloud.records)) {
+        setRecords(cloud.records);
+        saveRecords(cloud.records);
+      }
+      if (cloud.folders && Array.isArray(cloud.folders)) {
+        saveSavedFolders(cloud.folders);
+      }
+      if (cloud.settings) {
+        setSettings((prev) => ({ ...prev, ...cloud.settings }));
+      }
+      if (cloud.lastMessage) {
+        setLastMessage(cloud.lastMessage);
+        setSetting('last_message', cloud.lastMessage);
+      }
+    });
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [licenseInfo.activeKey, licenseInfo.isValid]);
+
+  // Auto-sync local state changes to Cloud Firestore
+  useEffect(() => {
+    if (!licenseInfo.isValid || !licenseInfo.activeKey) return;
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      saveCloudWorkspace(licenseInfo.activeKey, {
+        accountsText,
+        records,
+        folders: loadSavedFolders(),
+        settings,
+        lastMessage,
+      });
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [records, accountsText, settings, lastMessage, licenseInfo]);
 
   // Parsed Accounts
   const [disabledAccounts, setDisabledAccounts] = useState<Record<string, boolean>>({});
@@ -343,13 +446,16 @@ export function App() {
     setLogsMap({});
   };
 
-  // License verification screen
-  if (licenseInfo.isValid !== true) {
+  // License verification screen or switch modal
+  if (licenseInfo.isValid !== true || showLicenseModal) {
     return (
       <LicenseModal
-        isValid={licenseInfo.isValid}
+        isValid={showLicenseModal ? null : licenseInfo.isValid}
         activeKey={licenseInfo.activeKey}
-        onActivated={() => setLicenseInfo(checkLicense())}
+        onActivated={() => {
+          setShowLicenseModal(false);
+          setLicenseInfo(checkLicense());
+        }}
       />
     );
   }
@@ -374,6 +480,7 @@ export function App() {
           accounts={parsedAccounts}
           onToggleAccount={toggleAccount}
           runningMap={runningMap}
+          onChangeLicenseKey={() => setShowLicenseModal(true)}
           onSelectAccountTab={(user) => {
             setActiveTab('accounts');
             setSelectedAccountTab(user);

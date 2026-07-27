@@ -1,0 +1,19 @@
+{
+  "entities": {
+    "license_data": {
+      "title": "License Data Sync",
+      "description": "Cloud synchronized user workspace state mapped by License Key",
+      "properties": {
+        "licenseKey": { "type": "string" },
+        "accountsText": { "type": "string" },
+        "accounts": { "type": "array" },
+        "records": { "type": "array" },
+        "folders": { "type": "array font" },
+        "settings": { "type": "object" },
+        "lastMessage": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["licenseKey", "updatedAt"]
+    }
+  }
+}

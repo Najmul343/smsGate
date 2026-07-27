@@ -18,15 +18,20 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({ isValid, activeKey, 
     setSuccessMsg('');
     const trimmed = inputKey.trim().toUpperCase();
 
-    if (HARDCODED_KEYS[trimmed]) {
+    if (!trimmed) {
+      setErrorMsg('Please enter a valid License Key.');
+      return;
+    }
+
+    if (HARDCODED_KEYS[trimmed] !== undefined) {
       const days = HARDCODED_KEYS[trimmed];
       saveLicense(trimmed, days);
-      setSuccessMsg(`License Activated Successfully for ${days} Days!`);
+      setSuccessMsg(`License Activated for ${days} days! Syncing Cloud Workspace...`);
       setTimeout(() => {
         onActivated();
-      }, 1000);
+      }, 800);
     } else {
-      setErrorMsg('❌ Invalid License Key. Contact administrator on WhatsApp to purchase or renew.');
+      setErrorMsg('❌ Invalid License Key. Only authorized system license keys are allowed.');
     }
   };
 
@@ -133,11 +138,13 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({ isValid, activeKey, 
         </div>
 
         <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-[11px] text-slate-500 dark:text-slate-400 text-left space-y-1 border border-slate-200 dark:border-slate-800">
-          <p className="font-semibold text-slate-700 dark:text-slate-200">Demo License Keys:</p>
+          <p className="font-semibold text-slate-700 dark:text-slate-200">Authorized License Keys:</p>
           <div className="flex flex-wrap gap-1 font-mono text-[10px]">
-            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">TRIAL-1234-ABCD</span>
+            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">NAJMUL-WORK-2026</span>
+            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">PRO-NAJAM-1111</span>
             <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">PRO-AAAA-BBBB</span>
-            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">PRO-YOUR-NAME</span>
+            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">TRIAL-17741-ABCD</span>
+            <span className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded text-slate-900 dark:text-white">TRIAL-2563-ABCD</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { SmsAccount, RunSettings } from '../types/sms';
-import { Settings, Users, Clock, Bot, Trash2, Key, ShieldCheck, Zap, Calendar, Smartphone, Play } from 'lucide-react';
+import { Settings, Users, Clock, Bot, Trash2, Key, ShieldCheck, Zap, Calendar, Smartphone, Play, Cloud, CloudCheck, Copy, Check, RefreshCw } from 'lucide-react';
 
 interface SidebarProps {
   activeKey: string;
@@ -15,6 +15,8 @@ interface SidebarProps {
   onSettingsChange: (newSettings: Partial<RunSettings>) => void;
   onClearData: () => void;
   onTriggerScheduleNow?: () => void;
+  onChangeLicenseKey?: () => void;
+  isCloudSynced?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -30,8 +32,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSettingsChange,
   onClearData,
   onTriggerScheduleNow,
+  onChangeLicenseKey,
+  isCloudSynced = true,
 }) => {
+  const [copiedKey, setCopiedKey] = useState(false);
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const handleCopyKey = () => {
+    if (!activeKey) return;
+    navigator.clipboard.writeText(activeKey);
+    setCopiedKey(true);
+    setTimeout(() => setCopiedKey(false), 2000);
+  };
 
   const toggleDay = (day: string) => {
     const current = settings.scheduleDays || [];
@@ -40,15 +52,46 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
   return (
     <aside className="w-full lg:w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-5 space-y-6 shrink-0 overflow-y-auto">
-      {/* License Status Badge */}
-      <div className="bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-3.5 flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium">
-          <Key className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <span className="truncate max-w-[120px] font-mono font-bold">{activeKey || 'ACTIVE'}</span>
+      {/* License & Cloud Sync Card */}
+      <div className="bg-emerald-50/80 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-bold">
+            <Key className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span>LICENSE KEY</span>
+          </div>
+          <span className="bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-bold text-[10px]">
+            ⏳ {daysLeft} Days
+          </span>
         </div>
-        <span className="bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-full font-bold text-[11px]">
-          ⏳ {daysLeft} Days
-        </span>
+
+        <div className="flex items-center justify-between bg-white dark:bg-slate-900 border border-emerald-200/80 dark:border-emerald-800 px-3 py-2 rounded-xl text-xs font-mono">
+          <span className="font-extrabold text-slate-900 dark:text-white truncate max-w-[150px]">
+            {activeKey || 'PRO-KEY'}
+          </span>
+          <button
+            onClick={handleCopyKey}
+            className="text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors p-1"
+            title="Copy License Key to sync on another device"
+          >
+            {copiedKey ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Cloud Status Indicator */}
+        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
+          <span className="flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400">
+            <CloudCheck className="w-4 h-4 text-emerald-500 animate-pulse" />
+            <span>Cloud Sync Active</span>
+          </span>
+          {onChangeLicenseKey && (
+            <button
+              onClick={onChangeLicenseKey}
+              className="text-[10px] text-emerald-800 dark:text-emerald-300 hover:underline font-extrabold"
+            >
+              🔑 Switch Key
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="border-t border-slate-200 dark:border-slate-800 pt-4">
