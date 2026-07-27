@@ -5,6 +5,7 @@ import {
   reassignNumbers,
   getDeliveryStats,
   saveRecords,
+  getLocalTimestamp,
 } from '../utils/dbStore';
 import { normalizePhone } from '../utils/normalize';
 import { parseExcelFile } from '../utils/excelParser';
@@ -154,7 +155,7 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
             if (data.state) {
               cand.delivery_status = data.state;
               cand.delivery_reason = data.reason || '';
-              cand.delivery_checked_at = new Date().toISOString().replace('T', ' ').substring(0, 19);
+              cand.delivery_checked_at = getLocalTimestamp();
               checkedCount++;
             }
           }

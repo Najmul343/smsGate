@@ -9,6 +9,8 @@ import {
   loadControlMap,
   setRunning,
   getTodaysSuccessCount,
+  getLocalTimestamp,
+  getLocalDateString,
 } from './utils/dbStore';
 import { LicenseModal } from './components/LicenseModal';
 import { Sidebar } from './components/Sidebar';
@@ -30,6 +32,13 @@ export function App() {
   );
   const [lastMessage, setLastMessage] = useState<string>(getSetting('last_message', ''));
 
+  // Parse initial schedule days
+  let initialScheduleDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  try {
+    const raw = getSetting('sched_days', '');
+    if (raw) initialScheduleDays = JSON.parse(raw);
+  } catch {}
+
   // Run settings
   const [settings, setSettings] = useState<RunSettings>({
     dailyLimit: Number(getSetting('daily_limit', '180')),
@@ -39,6 +48,13 @@ export function App() {
     batchPause: Number(getSetting('batch_pause', '120')),
     maxRetries: Number(getSetting('max_retries', '3')),
     autoMode: getSetting('auto_mode', '1') === '1',
+    scheduleEnabled: getSetting('sched_enabled', '0') === '1',
+    scheduleTime: getSetting('sched_time', '10:00'),
+    scheduleDays: initialScheduleDays,
+    scheduleOnlyOnline: getSetting('sched_only_online', '1') === '1',
+    scheduleMessage: getSetting('sched_message', ''),
+    scheduleCount: Number(getSetting('sched_count', '50')),
+    lastScheduleRun: getSetting('last_sched_run', ''),
   });
 
   // Parsed Accounts
@@ -87,6 +103,13 @@ export function App() {
     if (newSettings.batchPause !== undefined) setSetting('batch_pause', String(newSettings.batchPause));
     if (newSettings.maxRetries !== undefined) setSetting('max_retries', String(newSettings.maxRetries));
     if (newSettings.autoMode !== undefined) setSetting('auto_mode', newSettings.autoMode ? '1' : '0');
+    if (newSettings.scheduleEnabled !== undefined) setSetting('sched_enabled', newSettings.scheduleEnabled ? '1' : '0');
+    if (newSettings.scheduleTime !== undefined) setSetting('sched_time', newSettings.scheduleTime);
+    if (newSettings.scheduleDays !== undefined) setSetting('sched_days', JSON.stringify(newSettings.scheduleDays));
+    if (newSettings.scheduleOnlyOnline !== undefined) setSetting('sched_only_online', newSettings.scheduleOnlyOnline ? '1' : '0');
+    if (newSettings.scheduleMessage !== undefined) setSetting('sched_message', newSettings.scheduleMessage);
+    if (newSettings.scheduleCount !== undefined) setSetting('sched_count', String(newSettings.scheduleCount));
+    if (newSettings.lastScheduleRun !== undefined) setSetting('last_sched_run', newSettings.lastScheduleRun);
   };
 
   const handleAccountsTextChange = (text: string) => {
@@ -148,7 +171,7 @@ export function App() {
             r.status === 'PENDING' &&
             r.assigned_api === acc.user &&
             r.attempts < settings.maxRetries &&
-            (!r.next_attempt_at || r.next_attempt_at <= new Date().toISOString())
+            (!r.next_attempt_at || r.next_attempt_at <= getLocalTimestamp())
         );
 
         if (!pendingRecord) {
@@ -175,7 +198,7 @@ export function App() {
           });
 
           const data = await res.json();
-          const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+          const nowStr = getLocalTimestamp();
 
           if (res.ok && data.success) {
             pendingRecord.status = 'SUCCESS';
@@ -192,7 +215,7 @@ export function App() {
 
             if (pendingRecord.attempts < settings.maxRetries) {
               const nextAttemptMs = Date.now() + 3 * pendingRecord.attempts * 60 * 1000;
-              pendingRecord.next_attempt_at = new Date(nextAttemptMs).toISOString();
+              pendingRecord.next_attempt_at = getLocalTimestamp(new Date(nextAttemptMs));
               addLog(acc.user, `⏳ ${targetPhone} - ${pendingRecord.last_error}, retrying in ${3 * pendingRecord.attempts} min`);
             } else {
               pendingRecord.status = 'FAILED';
@@ -238,6 +261,81 @@ export function App() {
     return () => clearInterval(interval);
   }, [activeAccounts, settings]);
 
+  // Scheduled Auto-Send (Cron Scheduler) Function
+  const triggerScheduleCheck = async (isManual = false) => {
+    if (!activeAccounts.length) {
+      if (isManual) alert('No active SMS accounts available.');
+      return;
+    }
+
+    const currentDay = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date().getDay()];
+    if (!isManual && settings.scheduleDays.length > 0 && !settings.scheduleDays.includes(currentDay)) {
+      return;
+    }
+
+    let startedAny = false;
+
+    for (const acc of activeAccounts) {
+      addLog(acc.user, `⏰ [Cron Scheduler] Checking device connectivity for ${acc.user}...`);
+
+      let isDeviceOnline = true;
+      if (settings.scheduleOnlyOnline) {
+        try {
+          const res = await fetch(
+            `/api/sms/devices?account=${encodeURIComponent(acc.user)}&password=${encodeURIComponent(acc.pwd)}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            const dev = data.devices && data.devices.length > 0 ? data.devices[0] : null;
+            isDeviceOnline = dev ? Boolean(dev.online) : false;
+          }
+        } catch {
+          isDeviceOnline = false;
+        }
+      }
+
+      if (isDeviceOnline) {
+        handleStartAccount(acc.user, settings.scheduleMessage || lastMessage);
+        addLog(acc.user, `🟢 [Cron Scheduler] Device is ONLINE! Auto-started dispatching queue.`);
+        startedAny = true;
+      } else {
+        addLog(acc.user, `⚠️ [Cron Scheduler] Device is OFFLINE. Auto-start skipped.`);
+      }
+    }
+
+    const nowRun = `${getLocalDateString()} ${new Date().getHours()}:${new Date().getMinutes()}`;
+    updateSettings({ lastScheduleRun: nowRun });
+
+    if (isManual) {
+      if (startedAny) {
+        alert('⚡ Scheduled Auto-Send triggered! Online devices have been started.');
+      } else {
+        alert('⚡ Scheduled Auto-Send triggered, but connected devices were offline or unavailable.');
+      }
+    }
+  };
+
+  // Scheduled Cron Engine Loop
+  useEffect(() => {
+    if (!settings.scheduleEnabled) return;
+
+    const checkScheduleTime = () => {
+      const now = new Date();
+      const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const currentMinuteRunKey = `${getLocalDateString()} ${currentHHMM}`;
+
+      if (
+        currentHHMM === settings.scheduleTime &&
+        settings.lastScheduleRun !== currentMinuteRunKey
+      ) {
+        triggerScheduleCheck(false);
+      }
+    };
+
+    const scheduleInterval = setInterval(checkScheduleTime, 15000);
+    return () => clearInterval(scheduleInterval);
+  }, [settings, activeAccounts, lastMessage]);
+
   const handleClearAllData = () => {
     setRecords([]);
     saveRecords([]);
@@ -278,6 +376,7 @@ export function App() {
           settings={settings}
           onSettingsChange={updateSettings}
           onClearData={handleClearAllData}
+          onTriggerScheduleNow={() => triggerScheduleCheck(true)}
         />
 
         {/* Right Main Content Area */}

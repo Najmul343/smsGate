@@ -1,6 +1,6 @@
 import React from 'react';
 import { SmsAccount, RunSettings } from '../types/sms';
-import { Settings, Users, Clock, Bot, Trash2, Key, ShieldCheck, Zap } from 'lucide-react';
+import { Settings, Users, Clock, Bot, Trash2, Key, ShieldCheck, Zap, Calendar, Smartphone, Play } from 'lucide-react';
 
 interface SidebarProps {
   activeKey: string;
@@ -12,6 +12,7 @@ interface SidebarProps {
   settings: RunSettings;
   onSettingsChange: (newSettings: Partial<RunSettings>) => void;
   onClearData: () => void;
+  onTriggerScheduleNow?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -24,7 +25,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   settings,
   onSettingsChange,
   onClearData,
+  onTriggerScheduleNow,
 }) => {
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const toggleDay = (day: string) => {
+    const current = settings.scheduleDays || [];
+    const updated = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
+    onSettingsChange({ scheduleDays: updated });
+  };
   return (
     <aside className="w-full lg:w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-5 space-y-6 shrink-0 overflow-y-auto">
       {/* License Status Badge */}
@@ -200,6 +209,111 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center gap-1">
                 <ShieldCheck className="w-3 h-3" /> Auto Mode active — auto-retries & rerouting enabled.
               </p>
+            )}
+          </div>
+        </div>
+
+        {/* Scheduled Auto-Send (Cron Job) */}
+        <div className="pt-2">
+          <div className="p-3.5 bg-blue-50/50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <span>Scheduled Auto-Send</span>
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.scheduleEnabled}
+                onChange={(e) => onSettingsChange({ scheduleEnabled: e.target.checked })}
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 dark:border-slate-700"
+              />
+            </div>
+
+            <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-tight">
+              Automatically triggers daily SMS dispatch if phone device is online.
+            </p>
+
+            {settings.scheduleEnabled && (
+              <div className="space-y-2.5 pt-1 text-xs">
+                {/* Schedule Time */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                    Daily Trigger Time:
+                  </label>
+                  <input
+                    type="time"
+                    value={settings.scheduleTime || '10:00'}
+                    onChange={(e) => onSettingsChange({ scheduleTime: e.target.value })}
+                    className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-mono text-xs font-bold"
+                  />
+                </div>
+
+                {/* Day selector */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                    Repeat Days:
+                  </label>
+                  <div className="flex flex-wrap gap-1">
+                    {weekdays.map((day) => {
+                      const isSel = (settings.scheduleDays || []).includes(day);
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => toggleDay(day)}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors ${
+                            isSel
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          {day}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Only send if online */}
+                <label className="flex items-center gap-1.5 text-[11px] text-slate-700 dark:text-slate-300 cursor-pointer pt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={settings.scheduleOnlyOnline}
+                    onChange={(e) => onSettingsChange({ scheduleOnlyOnline: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="flex items-center gap-1 font-semibold">
+                    <Smartphone className="w-3 h-3 text-emerald-500" /> Only if device is ONLINE
+                  </span>
+                </label>
+
+                {/* Scheduled Count Limit */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                    Max Messages per Run (0 = all):
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10000}
+                    value={settings.scheduleCount || 50}
+                    onChange={(e) => onSettingsChange({ scheduleCount: Number(e.target.value) || 0 })}
+                    className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 font-mono text-xs"
+                  />
+                </div>
+
+                {/* Trigger test button */}
+                {onTriggerScheduleNow && (
+                  <button
+                    type="button"
+                    onClick={onTriggerScheduleNow}
+                    className="w-full py-1.5 px-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg text-[11px] transition-colors flex items-center justify-center gap-1 mt-1"
+                  >
+                    <Play className="w-3 h-3 fill-white" />
+                    <span>⚡ Run Schedule Trigger Now</span>
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

@@ -30,6 +30,13 @@ export interface RunSettings {
   batchPause: number;
   maxRetries: number;
   autoMode: boolean;
+  scheduleEnabled: boolean;
+  scheduleTime: string;
+  scheduleDays: string[];
+  scheduleOnlyOnline: boolean;
+  scheduleMessage: string;
+  scheduleCount: number;
+  lastScheduleRun?: string;
 }
 
 export interface SavedFolder {

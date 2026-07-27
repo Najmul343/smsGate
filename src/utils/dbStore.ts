@@ -89,8 +89,27 @@ export function getDeliveryStats(records: SmsRecord[]) {
   return { delivered, failed, awaiting };
 }
 
+// Helper to get local date string YYYY-MM-DD
+export function getLocalDateString(date: Date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// Helper to get local timestamp YYYY-MM-DD HH:mm:ss
+export function getLocalTimestamp(date: Date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+}
+
 export function getTodaysSuccessCount(records: SmsRecord[], apiUser?: string): number {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   return records.filter((r) => {
     if (r.status !== 'SUCCESS') return false;
     if (apiUser && r.api_used !== apiUser) return false;
@@ -115,7 +134,7 @@ export function insertNumbers(
   const existingPhoneMap = new Map<string, SmsRecord>();
   records.forEach((r) => existingPhoneMap.set(r.phone, r));
 
-  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const now = getLocalTimestamp();
   let newCount = 0;
   let skippedCount = 0;
 
@@ -165,7 +184,7 @@ export function splitAndStartAll(
   });
 
   const nAccounts = activeAccounts.length;
-  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const now = getLocalTimestamp();
   const summary: { account: string; newCount: number; movedCount: number }[] = [];
 
   activeAccounts.forEach((acc, i) => {
