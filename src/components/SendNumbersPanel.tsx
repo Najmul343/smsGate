@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { SmsAccount, SavedFolder } from '../types/sms';
 import { parseExcelFile } from '../utils/excelParser';
 import { loadSavedFolders, saveSavedFolders } from '../utils/dbStore';
-import { FileSpreadsheet, FolderPlus, Send, RefreshCw, Trash2, Folder, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
+import { LiveExcelGrid } from './LiveExcelGrid';
+import { FileSpreadsheet, FolderPlus, Send, RefreshCw, Trash2, Folder, CheckCircle2, AlertCircle, Sparkles, Clipboard, Edit3 } from 'lucide-react';
 
 interface SendNumbersPanelProps {
   accounts: SmsAccount[];
@@ -19,7 +20,12 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   onSplitAndStart,
   onRetargetList,
 }) => {
-  const [activeTab, setActiveTab] = useState<'quick' | 'library'>('quick');
+  const [activeTab, setActiveTab] = useState<'quick' | 'live_grid' | 'library'>('live_grid');
+
+  // Live Grid Edit State (for loading saved files into live editor)
+  const [gridInitialNumbers, setGridInitialNumbers] = useState<string[]>([]);
+  const [gridInitialSheetName, setGridInitialSheetName] = useState<string>('');
+  const [gridInitialFolderName, setGridInitialFolderName] = useState<string>('');
 
   // Quick Upload State
   const [messageText, setMessageText] = useState(lastMessage);
@@ -193,20 +199,30 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
         {/* Tab switcher */}
         <div className="flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700 text-xs font-semibold">
           <button
-            onClick={() => setActiveTab('quick')}
+            onClick={() => setActiveTab('live_grid')}
             className={`px-3 py-1.5 rounded-lg transition-all ${
-              activeTab === 'quick'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+              activeTab === 'live_grid'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm font-bold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
-            ⚡ Quick Upload
+            📋 Live Excel Grid
+          </button>
+          <button
+            onClick={() => setActiveTab('quick')}
+            className={`px-3 py-1.5 rounded-lg transition-all ${
+              activeTab === 'quick'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm font-bold'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            ⚡ File Upload
           </button>
           <button
             onClick={() => setActiveTab('library')}
             className={`px-3 py-1.5 rounded-lg transition-all ${
               activeTab === 'library'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm font-bold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
             }`}
           >
@@ -214,6 +230,19 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {activeTab === 'live_grid' && (
+        <LiveExcelGrid
+          accounts={accounts}
+          lastMessage={lastMessage}
+          onSaveLastMessage={onSaveLastMessage}
+          onSplitAndStart={onSplitAndStart}
+          initialNumbers={gridInitialNumbers}
+          initialSheetName={gridInitialSheetName}
+          initialFolderName={gridInitialFolderName}
+          onSaveComplete={() => setFolders(loadSavedFolders())}
+        />
+      )}
 
       {activeTab === 'quick' && (
         <div className="space-y-5">
@@ -474,25 +503,38 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <button
                       onClick={handleLibSend}
                       disabled={!selectedFile}
-                      className="py-2.5 px-3 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      className="py-2.5 px-2 bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-bold rounded-xl text-xs hover:bg-slate-800 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       <Send className="w-3.5 h-3.5" /> 🚀 Send
                     </button>
                     <button
+                      onClick={() => {
+                        if (!currentFileObj) return;
+                        setGridInitialNumbers(currentFileObj.numbers);
+                        setGridInitialSheetName(currentFileObj.filename);
+                        setGridInitialFolderName(selectedFolder);
+                        setActiveTab('live_grid');
+                      }}
+                      disabled={!selectedFile}
+                      className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> ✏️ Edit in Live Grid
+                    </button>
+                    <button
                       onClick={handleLibRetarget}
                       disabled={!selectedFile}
-                      className="py-2.5 px-3 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs hover:bg-slate-300 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      className="py-2.5 px-2 bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold rounded-xl text-xs hover:bg-slate-300 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       <RefreshCw className="w-3.5 h-3.5" /> 🔁 Retarget
                     </button>
                     <button
                       onClick={handleDeleteFile}
                       disabled={!selectedFile}
-                      className="py-2.5 px-3 bg-red-100 dark:bg-red-950 text-red-600 dark:text-red-400 font-bold rounded-xl text-xs hover:bg-red-200 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      className="py-2.5 px-2 bg-red-100 dark:bg-red-950 text-red-600 dark:text-red-400 font-bold rounded-xl text-xs hover:bg-red-200 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
                       <Trash2 className="w-3.5 h-3.5" /> 🗑️ Delete
                     </button>
