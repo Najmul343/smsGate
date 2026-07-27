@@ -9,6 +9,8 @@ interface SidebarProps {
   onAccountsTextChange: (text: string) => void;
   accounts: SmsAccount[];
   onToggleAccount: (user: string) => void;
+  runningMap?: Record<string, boolean>;
+  onSelectAccountTab?: (user: string) => void;
   settings: RunSettings;
   onSettingsChange: (newSettings: Partial<RunSettings>) => void;
   onClearData: () => void;
@@ -22,6 +24,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onAccountsTextChange,
   accounts,
   onToggleAccount,
+  runningMap = {},
+  onSelectAccountTab,
   settings,
   onSettingsChange,
   onClearData,
@@ -74,21 +78,52 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {accounts.length > 0 && (
             <div className="space-y-1.5 pt-1">
-              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Active Routes:</p>
-              {accounts.map((acc) => (
-                <label
-                  key={acc.user}
-                  className="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 text-xs text-slate-800 dark:text-slate-200 cursor-pointer hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <span className="font-mono font-medium truncate">{acc.user}</span>
-                  <input
-                    type="checkbox"
-                    checked={acc.enabled}
-                    onChange={() => onToggleAccount(acc.user)}
-                    className="w-4 h-4 rounded text-slate-900 focus:ring-slate-900 border-slate-300 dark:border-slate-700"
-                  />
-                </label>
-              ))}
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Active Devices / Routes:</p>
+                <span className="text-[10px] text-slate-400">Status Dot</span>
+              </div>
+              {accounts.map((acc) => {
+                const isRunning = Boolean(runningMap[acc.user]);
+                return (
+                  <div
+                    key={acc.user}
+                    className="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-slate-800/60 text-xs text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    <div 
+                      onClick={() => onSelectAccountTab?.(acc.user)}
+                      className="flex items-center gap-2 cursor-pointer flex-1 min-w-0 pr-2"
+                      title="Click to view this device tab"
+                    >
+                      {/* Visual Status Indicator Dot */}
+                      {acc.enabled ? (
+                        isRunning ? (
+                          <span className="relative flex h-2.5 w-2.5 shrink-0" title="Device Running & Sending Queue">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                          </span>
+                        ) : (
+                          <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shrink-0" title="Device Online / Idle"></span>
+                        )
+                      ) : (
+                        <span className="h-2.5 w-2.5 rounded-full bg-slate-400 shrink-0" title="Device Disabled"></span>
+                      )}
+
+                      <span className="font-mono font-medium truncate">{acc.user}</span>
+                      
+                      <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-tight shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                        {acc.enabled ? (isRunning ? 'Running' : 'Ready') : 'Disabled'}
+                      </span>
+                    </div>
+
+                    <input
+                      type="checkbox"
+                      checked={acc.enabled}
+                      onChange={() => onToggleAccount(acc.user)}
+                      className="w-4 h-4 rounded text-slate-900 focus:ring-slate-900 border-slate-300 dark:border-slate-700 cursor-pointer shrink-0"
+                    />
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -232,6 +267,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-tight">
               Automatically triggers daily SMS dispatch if phone device is online.
             </p>
+
+            <div className="p-2 bg-blue-100/60 dark:bg-blue-900/40 rounded-lg text-[10px] text-blue-900 dark:text-blue-200 space-y-1">
+              <span className="font-bold">📌 How queue selection works:</span>
+              <p>
+                When triggered, it picks up all <strong>PENDING</strong> numbers currently assigned to each active route — combining numbers added from <strong>Send Numbers</strong> (quick paste / saved folder) and <strong>Route Uploads</strong>.
+              </p>
+            </div>
 
             {settings.scheduleEnabled && (
               <div className="space-y-2.5 pt-1 text-xs">

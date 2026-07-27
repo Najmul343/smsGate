@@ -148,108 +148,108 @@ export function App() {
     addLog(accountUser, `⏹️ Stopped route worker for ${accountUser}`);
   };
 
-  // Dispatch SMS worker loop
+  // Dispatch SMS worker loop - runs parallel dispatch across all active devices
   useEffect(() => {
     const runWorkerCycle = async () => {
       const currentRecords = [...recordsRef.current];
       let recordsModified = false;
 
-      for (const acc of activeAccounts) {
-        if (!runningMapRef.current[acc.user]) continue;
+      // Process all running accounts simultaneously per cycle
+      await Promise.all(
+        activeAccounts.map(async (acc) => {
+          if (!runningMapRef.current[acc.user]) return;
 
-        // Check daily limit
-        const sentToday = getTodaysSuccessCount(currentRecords, acc.user);
-        if (sentToday >= settings.dailyLimit) {
-          addLog(acc.user, `🛑 Daily limit reached (${settings.dailyLimit}). Pausing.`);
-          setRunningMap((prev) => ({ ...prev, [acc.user]: false }));
-          continue;
-        }
+          // Check daily limit
+          const sentToday = getTodaysSuccessCount(currentRecords, acc.user);
+          if (sentToday >= settings.dailyLimit) {
+            addLog(acc.user, `🛑 Daily limit reached (${settings.dailyLimit}). Pausing.`);
+            setRunningMap((prev) => ({ ...prev, [acc.user]: false }));
+            return;
+          }
 
-        // Find pending record for this account
-        const pendingRecord = currentRecords.find(
-          (r) =>
-            r.status === 'PENDING' &&
-            r.assigned_api === acc.user &&
-            r.attempts < settings.maxRetries &&
-            (!r.next_attempt_at || r.next_attempt_at <= getLocalTimestamp())
-        );
+          // Find pending record for this account
+          const pendingRecord = currentRecords.find(
+            (r) =>
+              r.status === 'PENDING' &&
+              r.assigned_api === acc.user &&
+              r.attempts < settings.maxRetries &&
+              (!r.next_attempt_at || r.next_attempt_at <= getLocalTimestamp())
+          );
 
-        if (!pendingRecord) {
-          addLog(acc.user, `🎉 Queue finished — no pending numbers left.`);
-          setRunningMap((prev) => ({ ...prev, [acc.user]: false }));
-          continue;
-        }
+          if (!pendingRecord) {
+            addLog(acc.user, `🎉 Queue finished — no pending numbers left.`);
+            setRunningMap((prev) => ({ ...prev, [acc.user]: false }));
+            return;
+          }
 
-        // Send SMS request via serverless API endpoint
-        const targetPhone = pendingRecord.phone;
-        const msgText = pendingRecord.message_sent || lastMessage;
+          // Send SMS request via serverless API endpoint
+          const targetPhone = pendingRecord.phone;
+          const msgText = pendingRecord.message_sent || lastMessage;
 
-        try {
-          const res = await fetch('/api/sms/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              account: acc.user,
-              password: acc.pwd,
-              message: msgText,
-              phoneNumbers: [targetPhone],
-              withDeliveryReport: true,
-            }),
-          });
+          try {
+            const res = await fetch('/api/sms/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                account: acc.user,
+                password: acc.pwd,
+                message: msgText,
+                phoneNumbers: [targetPhone],
+                withDeliveryReport: true,
+              }),
+            });
 
-          const data = await res.json();
-          const nowStr = getLocalTimestamp();
+            const data = await res.json();
+            const nowStr = getLocalTimestamp();
 
-          if (res.ok && data.success) {
-            pendingRecord.status = 'SUCCESS';
-            pendingRecord.attempts += 1;
-            pendingRecord.api_used = acc.user;
-            pendingRecord.last_time = nowStr;
-            pendingRecord.message_id = data.id || undefined;
-            addLog(acc.user, `✅ ${targetPhone} (Sent — delivery check pending)`);
-            recordsModified = true;
-          } else {
-            pendingRecord.attempts += 1;
-            pendingRecord.last_error = data.error || `HTTP_${res.status}`;
-            pendingRecord.last_time = nowStr;
-
-            if (pendingRecord.attempts < settings.maxRetries) {
-              const nextAttemptMs = Date.now() + 3 * pendingRecord.attempts * 60 * 1000;
-              pendingRecord.next_attempt_at = getLocalTimestamp(new Date(nextAttemptMs));
-              addLog(acc.user, `⏳ ${targetPhone} - ${pendingRecord.last_error}, retrying in ${3 * pendingRecord.attempts} min`);
+            if (res.ok && data.success) {
+              pendingRecord.status = 'SUCCESS';
+              pendingRecord.attempts += 1;
+              pendingRecord.api_used = acc.user;
+              pendingRecord.last_time = nowStr;
+              pendingRecord.message_id = data.id || undefined;
+              addLog(acc.user, `✅ ${targetPhone} (Sent — delivery check pending)`);
+              recordsModified = true;
             } else {
-              pendingRecord.status = 'FAILED';
-              addLog(acc.user, `❌ ${targetPhone} - ${pendingRecord.last_error} (retries exhausted)`);
+              pendingRecord.attempts += 1;
+              pendingRecord.last_error = data.error || `HTTP_${res.status}`;
+              pendingRecord.last_time = nowStr;
 
-              // Auto-hop if Auto Mode is ON
-              if (settings.autoMode && activeAccounts.length > 1) {
-                const otherAccounts = activeAccounts.filter((a) => a.user !== acc.user);
-                if (otherAccounts.length > 0 && (pendingRecord.auto_retry_count || 0) < 2) {
-                  const targetAcc = otherAccounts[0];
-                  pendingRecord.status = 'PENDING';
-                  pendingRecord.attempts = 0;
-                  pendingRecord.assigned_api = targetAcc.user;
-                  pendingRecord.auto_retry_count = (pendingRecord.auto_retry_count || 0) + 1;
-                  pendingRecord.next_attempt_at = undefined;
-                  addLog(acc.user, `🔀 Auto-hopped ${targetPhone} to ${targetAcc.user}`);
+              if (pendingRecord.attempts < settings.maxRetries) {
+                const nextAttemptMs = Date.now() + 3 * pendingRecord.attempts * 60 * 1000;
+                pendingRecord.next_attempt_at = getLocalTimestamp(new Date(nextAttemptMs));
+                addLog(acc.user, `⏳ ${targetPhone} - ${pendingRecord.last_error}, retrying in ${3 * pendingRecord.attempts} min`);
+              } else {
+                pendingRecord.status = 'FAILED';
+                addLog(acc.user, `❌ ${targetPhone} - ${pendingRecord.last_error} (retries exhausted)`);
+
+                // Auto-hop if Auto Mode is ON
+                if (settings.autoMode && activeAccounts.length > 1) {
+                  const otherAccounts = activeAccounts.filter((a) => a.user !== acc.user);
+                  if (otherAccounts.length > 0 && (pendingRecord.auto_retry_count || 0) < 2) {
+                    const targetAcc = otherAccounts[0];
+                    pendingRecord.status = 'PENDING';
+                    pendingRecord.attempts = 0;
+                    pendingRecord.assigned_api = targetAcc.user;
+                    pendingRecord.auto_retry_count = (pendingRecord.auto_retry_count || 0) + 1;
+                    pendingRecord.next_attempt_at = undefined;
+                    addLog(acc.user, `🔀 Auto-hopped ${targetPhone} to ${targetAcc.user}`);
+                  }
                 }
               }
+              recordsModified = true;
             }
+          } catch (err: any) {
+            pendingRecord.attempts += 1;
+            pendingRecord.last_error = 'NETWORK_ERROR';
+            if (pendingRecord.attempts >= settings.maxRetries) {
+              pendingRecord.status = 'FAILED';
+            }
+            addLog(acc.user, `❌ ${targetPhone} Network error.`);
             recordsModified = true;
           }
-        } catch (err: any) {
-          pendingRecord.attempts += 1;
-          pendingRecord.last_error = 'NETWORK_ERROR';
-          if (pendingRecord.attempts >= settings.maxRetries) {
-            pendingRecord.status = 'FAILED';
-          }
-          addLog(acc.user, `❌ ${targetPhone} Network error.`);
-          recordsModified = true;
-        }
-
-        // Only process one SMS per loop iteration to maintain delay spacing
-        break;
-      }
+        })
+      );
 
       if (recordsModified) {
         setRecords([...currentRecords]);
@@ -373,6 +373,11 @@ export function App() {
           onAccountsTextChange={handleAccountsTextChange}
           accounts={parsedAccounts}
           onToggleAccount={toggleAccount}
+          runningMap={runningMap}
+          onSelectAccountTab={(user) => {
+            setActiveTab('accounts');
+            setSelectedAccountTab(user);
+          }}
           settings={settings}
           onSettingsChange={updateSettings}
           onClearData={handleClearAllData}
@@ -481,19 +486,30 @@ export function App() {
               ) : (
                 <>
                   <div className="flex gap-2 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800">
-                    {activeAccounts.map((acc) => (
-                      <button
-                        key={acc.user}
-                        onClick={() => setSelectedAccountTab(acc.user)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all border ${
-                          (selectedAccountTab || activeAccounts[0]?.user) === acc.user
-                            ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm'
-                            : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
-                        }`}
-                      >
-                        🤖 {acc.user}
-                      </button>
-                    ))}
+                    {activeAccounts.map((acc) => {
+                      const isRunning = Boolean(runningMap[acc.user]);
+                      return (
+                        <button
+                          key={acc.user}
+                          onClick={() => setSelectedAccountTab(acc.user)}
+                          className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold transition-all border flex items-center gap-2 ${
+                            (selectedAccountTab || activeAccounts[0]?.user) === acc.user
+                              ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 border-slate-900 dark:border-white shadow-sm'
+                              : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'
+                          }`}
+                        >
+                          {isRunning ? (
+                            <span className="relative flex h-2 w-2 shrink-0">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                            </span>
+                          ) : (
+                            <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0"></span>
+                          )}
+                          <span>🤖 {acc.user}</span>
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {activeAccounts
