@@ -36,6 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isCloudSynced = true,
 }) => {
   const [copiedKey, setCopiedKey] = useState(false);
+  const [mobileExpanded, setMobileExpanded] = useState(false);
   const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   const handleCopyKey = () => {
@@ -50,9 +51,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const updated = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
     onSettingsChange({ scheduleDays: updated });
   };
+
   return (
-    <aside className="w-full lg:w-80 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-5 space-y-6 shrink-0 overflow-y-auto">
-      {/* License & Cloud Sync Card */}
+    <aside className="w-full lg:w-80 bg-white dark:bg-slate-900 border lg:border-r border-slate-200 dark:border-slate-800 rounded-2xl lg:rounded-none p-4 sm:p-5 space-y-4 lg:space-y-6 shrink-0 overflow-y-auto">
+      {/* Mobile Toggle Button */}
+      <div className="flex lg:hidden items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center gap-2 font-bold text-xs text-slate-800 dark:text-slate-200">
+          <Settings className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+          <span>License & Automation Settings</span>
+        </div>
+        <button
+          onClick={() => setMobileExpanded(!mobileExpanded)}
+          className="px-3 py-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold transition-colors"
+        >
+          {mobileExpanded ? 'Hide Settings ▲' : 'Show Settings ▼'}
+        </button>
+      </div>
+
+      <div className={`${mobileExpanded ? 'block' : 'hidden lg:block'} space-y-6`}>
+        {/* License & Cloud Sync Card */}
       <div className="bg-emerald-50/80 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-bold">
@@ -418,6 +435,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
       </div>
-    </aside>
+    </div>
+  </aside>
   );
 };

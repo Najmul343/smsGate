@@ -470,7 +470,7 @@ export function App() {
       />
 
       {/* Main Container Layout */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col lg:flex-row gap-6">
+      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 flex flex-col lg:flex-row gap-6">
         {/* Left Sidebar */}
         <Sidebar
           activeKey={licenseInfo.activeKey}
