@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { SmsRecord, SmsAccount } from '../types/sms';
 import {
   getRoutesWithPending,
@@ -6,6 +6,7 @@ import {
   getDeliveryStats,
   saveRecords,
   getLocalTimestamp,
+  insertNumbers,
 } from '../utils/dbStore';
 import { parseExcelFile } from '../utils/excelParser';
 import {
@@ -29,21 +30,40 @@ import {
   Square,
   Sparkles,
   Info,
+  Plus,
+  Upload,
 } from 'lucide-react';
 
 interface MasterLogTabProps {
   records: SmsRecord[];
   accounts: SmsAccount[];
   onRecordsUpdated: (updated: SmsRecord[]) => void;
+  onSendAllRemaining?: () => void;
 }
 
 export const MasterLogTab: React.FC<MasterLogTabProps> = ({
   records,
   accounts,
   onRecordsUpdated,
+  onSendAllRemaining,
 }) => {
   // Selection State for Bulk Operations
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
+
+  // Custom Modal & Toast state (replaces window.confirm & alert which get blocked in iFrames)
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    confirmLabel?: string;
+    confirmColor?: string;
+  } | null>(null);
+
+  const [actionToast, setActionToast] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setActionToast(msg);
+    setTimeout(() => setActionToast(null), 4000);
+  };
 
   // Editing Name Modal / State
   const [editingRecordPhone, setEditingRecordPhone] = useState<string | null>(null);
@@ -68,6 +88,48 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
   // Delivery check state
   const [checkingDelivery, setCheckingDelivery] = useState(false);
   const [deliveryCheckMsg, setDeliveryCheckMsg] = useState('');
+
+  // Direct Add / Import Numbers to Queue State
+  const [showAddNumbersModal, setShowAddNumbersModal] = useState(false);
+  const [addNumbersInput, setAddNumbersInput] = useState('');
+  const [addNumbersRoute, setAddNumbersRoute] = useState('');
+  const [addNumbersFeedback, setAddNumbersFeedback] = useState('');
+
+  const handleImportPastedNumbers = () => {
+    if (!addNumbersInput.trim()) return;
+    const lines = addNumbersInput.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const parsedList: (string | { phone: string; name?: string })[] = [];
+
+    lines.forEach((line) => {
+      if (line.includes('\t')) {
+        const parts = line.split('\t').map((p) => p.trim());
+        parsedList.push({ phone: parts[0], name: parts[1] });
+      } else if (line.includes(',')) {
+        const parts = line.split(',').map((p) => p.trim());
+        parsedList.push({ phone: parts[0], name: parts[1] });
+      } else {
+        parsedList.push(line);
+      }
+    });
+
+    const res = insertNumbers(records, parsedList, addNumbersRoute);
+    onRecordsUpdated(res.updatedRecords);
+    setAddNumbersFeedback(`✅ Successfully added ${res.newCount} new and ${res.requeuedCount} re-queued numbers to 'Yet to Send' queue!`);
+    setAddNumbersInput('');
+  };
+
+  const handleImportExcelFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = await parseExcelFile(file);
+      const res = insertNumbers(records, parsed.numbers, addNumbersRoute);
+      onRecordsUpdated(res.updatedRecords);
+      setAddNumbersFeedback(`✅ Uploaded '${file.name}': Added ${res.newCount} new & ${res.requeuedCount} re-queued numbers to 'Yet to Send' queue!`);
+    } catch {
+      alert('Error parsing Excel file.');
+    }
+  };
 
   // Data Table Filter State
   const [viewFilter, setViewFilter] = useState<'all' | 'success' | 'pending' | 'failed' | 'delivered' | 'failed_phone'>('all');
@@ -177,6 +239,10 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                 target.delivery_status = data.state;
                 target.delivery_reason = data.reason || '';
                 target.delivery_checked_at = getLocalTimestamp();
+                if (data.state === 'FAILED' || data.state === 'UNDELIVERED' || data.state === 'REJECTED' || data.state === 'EXPIRED') {
+                  target.status = 'FAILED';
+                  target.last_error = `Mobile Delivery Failed: ${data.reason || data.state}`;
+                }
               }
               checkedCount++;
             }
@@ -271,13 +337,20 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
   };
 
   const handleDeleteRecord = (phone: string) => {
-    if (window.confirm(`Delete ${phone} from global database?`)) {
-      const updated = records.filter((r) => r.phone !== phone);
-      saveRecords(updated);
-      onRecordsUpdated(updated);
-      selectedPhones.delete(phone);
-      setSelectedPhones(new Set(selectedPhones));
-    }
+    setConfirmModal({
+      title: 'Delete Single Record',
+      message: `Delete ${phone} from global database?`,
+      confirmLabel: 'Delete Record',
+      confirmColor: 'bg-red-600 hover:bg-red-700',
+      onConfirm: () => {
+        const updated = records.filter((r) => r.phone !== phone);
+        saveRecords(updated);
+        onRecordsUpdated(updated);
+        selectedPhones.delete(phone);
+        setSelectedPhones(new Set(selectedPhones));
+        showToast(`Deleted ${phone} from database`);
+      },
+    });
   };
 
   const handleSaveNameEdit = () => {
@@ -305,12 +378,19 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
 
   const handleBulkDelete = () => {
     if (!selectedPhones.size) return;
-    if (window.confirm(`Delete ${selectedPhones.size} selected records from database?`)) {
-      const updated = records.filter((r) => !selectedPhones.has(r.phone));
-      saveRecords(updated);
-      onRecordsUpdated(updated);
-      setSelectedPhones(new Set());
-    }
+    setConfirmModal({
+      title: 'Delete Selected Records',
+      message: `Are you sure you want to delete ${selectedPhones.size} selected records from database?`,
+      confirmLabel: `Delete ${selectedPhones.size} Selected`,
+      confirmColor: 'bg-red-600 hover:bg-red-700',
+      onConfirm: () => {
+        const updated = records.filter((r) => !selectedPhones.has(r.phone));
+        saveRecords(updated);
+        onRecordsUpdated(updated);
+        setSelectedPhones(new Set());
+        showToast(`Deleted ${selectedPhones.size} selected records!`);
+      },
+    });
   };
 
   const handleBulkRequeue = () => {
@@ -328,47 +408,117 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
     });
     saveRecords(updated);
     onRecordsUpdated(updated);
-    alert(`Re-queued ${selectedPhones.size} records back to PENDING!`);
+    showToast(`Re-queued ${selectedPhones.size} records back to PENDING!`);
   };
 
-  // Filtered Records for Display
-  let displayRecords = [...records];
-  if (viewFilter === 'success') displayRecords = displayRecords.filter((r) => r.status === 'SUCCESS');
-  else if (viewFilter === 'pending') displayRecords = displayRecords.filter((r) => r.status === 'PENDING');
-  else if (viewFilter === 'failed') displayRecords = displayRecords.filter((r) => r.status === 'FAILED');
-  else if (viewFilter === 'delivered') displayRecords = displayRecords.filter((r) => r.delivery_status === 'DELIVERED');
-  else if (viewFilter === 'failed_phone') displayRecords = displayRecords.filter((r) => r.delivery_status === 'FAILED');
+  const isPendingRecord = (r: SmsRecord) =>
+    !r.status ||
+    r.status === 'PENDING' ||
+    (r.status as string) === 'pending' ||
+    (r.status !== 'SUCCESS' && r.status !== 'FAILED' && (!r.attempts || r.attempts === 0));
 
-  if (deviceFilter !== 'all') {
-    displayRecords = displayRecords.filter((r) => r.assigned_api === deviceFilter || r.api_used === deviceFilter);
-  }
+  const handleDeleteAllPending = () => {
+    const pendingList = records.filter(isPendingRecord);
+    const pCount = pendingList.length;
+    if (pCount === 0) {
+      showToast('No pending/untouched numbers found in database.');
+      return;
+    }
+    const updated = records.filter((r) => !isPendingRecord(r));
+    saveRecords(updated);
+    onRecordsUpdated(updated);
+    setSelectedPhones(new Set());
+    showToast(`Deleted ${pCount} untouched numbers from database!`);
+  };
 
-  if (searchTerm) {
-    const term = searchTerm.toLowerCase();
-    displayRecords = displayRecords.filter(
-      (r) =>
-        (r.name && r.name.toLowerCase().includes(term)) ||
-        r.phone.toLowerCase().includes(term) ||
-        r.assigned_api.toLowerCase().includes(term) ||
-        r.api_used.toLowerCase().includes(term) ||
-        r.message_sent.toLowerCase().includes(term) ||
-        (r.last_error && r.last_error.toLowerCase().includes(term)) ||
-        (r.delivery_reason && r.delivery_reason.toLowerCase().includes(term))
-    );
-  }
+  const handleDeletePlus7Numbers = () => {
+    const plus7List = records.filter((r) => r.phone && (r.phone.startsWith('+7') || r.phone.startsWith('79') || r.phone.startsWith('77')));
+    const pCount = plus7List.length;
+    if (pCount === 0) {
+      showToast('No numbers starting with +7 found in database.');
+      return;
+    }
+    const updated = records.filter((r) => !(r.phone && (r.phone.startsWith('+7') || r.phone.startsWith('79') || r.phone.startsWith('77'))));
+    saveRecords(updated);
+    onRecordsUpdated(updated);
+    setSelectedPhones(new Set());
+    showToast(`Successfully deleted ${pCount} numbers starting with +7!`);
+  };
 
-  const deliveryStats = getDeliveryStats(records);
-  const successAccountsList = Array.from(
-    new Set(records.filter((r) => r.status === 'SUCCESS' && r.assigned_api).map((r) => r.assigned_api))
-  );
+  const handleClearAllDatabase = () => {
+    if (records.length === 0) return;
+    setConfirmModal({
+      title: 'Clear Entire Database',
+      message: `⚠️ CRITICAL: Are you sure you want to clear ALL ${records.length} records from the entire database? This action cannot be undone.`,
+      confirmLabel: 'Clear All Database Records',
+      confirmColor: 'bg-red-700 hover:bg-red-800',
+      onConfirm: () => {
+        saveRecords([]);
+        onRecordsUpdated([]);
+        setSelectedPhones(new Set());
+        showToast('All database records cleared!');
+      },
+    });
+  };
 
-  // Stats calculation
-  const totalRecordsCount = records.length;
-  const pendingCount = records.filter((r) => r.status === 'PENDING').length;
-  const successCount = records.filter((r) => r.status === 'SUCCESS').length;
-  const failedCount = records.filter((r) => r.status === 'FAILED').length;
-  const deliveredCount = deliveryStats.delivered;
-  const phoneFailedCount = deliveryStats.failed;
+  // Filtered Records for Display (Memoized for high performance with large datasets)
+  const displayRecords = useMemo(() => {
+    let list = [...records];
+    if (viewFilter === 'success') list = list.filter((r) => r.status === 'SUCCESS');
+    else if (viewFilter === 'pending') list = list.filter((r) => isPendingRecord(r));
+    else if (viewFilter === 'failed') list = list.filter((r) => r.status === 'FAILED');
+    else if (viewFilter === 'delivered') list = list.filter((r) => r.delivery_status === 'DELIVERED');
+    else if (viewFilter === 'failed_phone') list = list.filter((r) => r.delivery_status === 'FAILED');
+
+    if (deviceFilter !== 'all') {
+      list = list.filter((r) => r.assigned_api === deviceFilter || r.api_used === deviceFilter);
+    }
+
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      list = list.filter(
+        (r) =>
+          (r.name && r.name.toLowerCase().includes(term)) ||
+          r.phone.toLowerCase().includes(term) ||
+          (r.assigned_api && r.assigned_api.toLowerCase().includes(term)) ||
+          (r.api_used && r.api_used.toLowerCase().includes(term)) ||
+          (r.message_sent && r.message_sent.toLowerCase().includes(term)) ||
+          (r.last_error && r.last_error.toLowerCase().includes(term)) ||
+          (r.delivery_reason && r.delivery_reason.toLowerCase().includes(term))
+      );
+    }
+    return list;
+  }, [records, viewFilter, deviceFilter, searchTerm]);
+
+  // Pagination State
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [viewFilter, deviceFilter, searchTerm, pageSize]);
+
+  const paginatedRecords = useMemo(() => {
+    if (pageSize === -1) return displayRecords;
+    const start = (currentPage - 1) * pageSize;
+    return displayRecords.slice(start, start + pageSize);
+  }, [displayRecords, currentPage, pageSize]);
+
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(displayRecords.length / pageSize));
+
+  // Stats calculation (Memoized)
+  const { totalRecordsCount, pendingCount, successCount, failedCount, deliveredCount, phoneFailedCount, deliveryStats } = useMemo(() => {
+    const stats = getDeliveryStats(records);
+    return {
+      totalRecordsCount: records.length,
+      pendingCount: records.filter(isPendingRecord).length,
+      successCount: records.filter((r) => r.status === 'SUCCESS').length,
+      failedCount: records.filter((r) => r.status === 'FAILED').length,
+      deliveredCount: stats.delivered,
+      phoneFailedCount: stats.failed,
+      deliveryStats: stats,
+    };
+  }, [records]);
 
   return (
     <div className="space-y-6">
@@ -386,6 +536,28 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {records.some((r) => r.phone.startsWith('+7')) && (
+              <button
+                onClick={handleDeletePlus7Numbers}
+                className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                title="Delete all numbers that were incorrectly formatted with +7 country code"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete +7 Numbers ({records.filter((r) => r.phone.startsWith('+7')).length})</span>
+              </button>
+            )}
+
+            {pendingCount > 0 && (
+              <button
+                onClick={handleDeleteAllPending}
+                className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                title="Delete all pending / untouched numbers from the database"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Untouched ({pendingCount})</span>
+              </button>
+            )}
+
             <button
               onClick={() => handleDownloadCSV(false)}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm flex items-center gap-1.5"
@@ -393,6 +565,17 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
               <Download className="w-4 h-4" />
               <span>📥 Export CSV Database</span>
             </button>
+
+            {records.length > 0 && (
+              <button
+                onClick={handleClearAllDatabase}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-extrabold rounded-xl text-xs transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+                title="Wipe all database records"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                <span>Clear DB</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -413,9 +596,12 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
             <span className="text-xl font-black text-blue-700 dark:text-blue-300">{successCount}</span>
           </div>
 
-          <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-200 dark:border-amber-800/80 space-y-1">
-            <span className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 block">⏳ Queue Pending</span>
-            <span className="text-xl font-black text-amber-700 dark:text-amber-300">{pendingCount}</span>
+          <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-xl border border-amber-300 dark:border-amber-800 space-y-1 ring-2 ring-amber-400/30 dark:ring-amber-500/20">
+            <span className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-300 block flex items-center justify-between">
+              <span>⏳ Queue Pending</span>
+              <span className="text-[9px] font-normal font-sans bg-amber-200 dark:bg-amber-900 px-1.5 py-0.2 rounded text-amber-900 dark:text-amber-100">Yet to send</span>
+            </span>
+            <span className="text-2xl font-black text-amber-700 dark:text-amber-300">{pendingCount}</span>
           </div>
 
           <div className="bg-red-50 dark:bg-red-950/40 p-3 rounded-xl border border-red-200 dark:border-red-800/80 space-y-1">
@@ -430,6 +616,145 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
             </span>
           </div>
         </div>
+
+        {/* ⏳ Highlight Banner for Remaining Contacts Yet To Be Sent */}
+        <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300 shrink-0">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="font-extrabold text-amber-900 dark:text-amber-200 text-sm flex items-center gap-2">
+                <span>Remaining Contacts Status:</span>
+                <span className="font-mono text-base px-2 py-0.5 rounded-lg bg-amber-200 dark:bg-amber-900 text-amber-950 dark:text-amber-100 font-black">
+                  {pendingCount} contacts
+                </span>
+                <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">yet to be sent message</span>
+              </p>
+              <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">
+                Out of <strong className="font-mono text-slate-900 dark:text-white">{totalRecordsCount}</strong> total database records, <strong className="font-mono text-amber-700 dark:text-amber-300">{pendingCount}</strong> ({totalRecordsCount > 0 ? Math.round((pendingCount / totalRecordsCount) * 100) : 0}%) are currently in queue waiting for dispatch.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {onSendAllRemaining && pendingCount > 0 && (
+              <button
+                onClick={onSendAllRemaining}
+                className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs transition-colors flex items-center gap-1.5 shadow-md cursor-pointer animate-pulse"
+                title="Remove account filters, auto-distribute all remaining numbers across all available APIs, and start dispatching!"
+              >
+                <Send className="w-4 h-4" />
+                <span>🌐 Send All Remaining (Any Available API)</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowAddNumbersModal(!showAddNumbersModal)}
+              className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs transition-colors flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>➕ Add / Import Numbers</span>
+            </button>
+
+            {pendingCount > 0 && viewFilter !== 'pending' && (
+              <button
+                onClick={() => setViewFilter('pending')}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs transition-colors shrink-0 flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>Show {pendingCount} Pending</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* 📥 Quick Add / Import Numbers Expandable Drawer */}
+        {showAddNumbersModal && (
+          <div className="bg-slate-100 dark:bg-slate-900 border-2 border-emerald-500/40 rounded-2xl p-5 space-y-4 shadow-md">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-emerald-600" />
+                  <span>Import / Add Numbers directly to 'Yet to Send' Database</span>
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Upload an Excel file or paste phone numbers directly below. Numbers will immediately reflect in the 'Yet to Send' queue count!
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAddNumbersModal(false)}
+                className="text-xs text-slate-400 hover:text-slate-600 font-bold"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Option A: Excel Upload */}
+              <div className="p-4 bg-white dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Upload className="w-4 h-4 text-emerald-600" /> Option 1: Upload Excel File (.xlsx, .xls)
+                </label>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={handleImportExcelFile}
+                  className="block w-full text-xs text-slate-500 file:mr-3 file:py-2 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-extrabold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer"
+                />
+              </div>
+
+              {/* Option B: Copy/Paste Raw Numbers */}
+              <div className="p-4 bg-white dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+                <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Send className="w-4 h-4 text-emerald-600" /> Option 2: Paste Numbers directly
+                </label>
+                <textarea
+                  value={addNumbersInput}
+                  onChange={(e) => setAddNumbersInput(e.target.value)}
+                  placeholder="Paste numbers (one per line, e.g., 919876543210 or 919876543210, John Doe)..."
+                  rows={3}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs font-mono text-slate-900 dark:text-white outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Target Route Selector & Submit */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="font-semibold text-slate-600 dark:text-slate-400">Assign to API Route (Optional):</span>
+                <select
+                  value={addNumbersRoute}
+                  onChange={(e) => setAddNumbersRoute(e.target.value)}
+                  className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-xs"
+                >
+                  <option value="">-- Unassigned (Auto Round-Robin) --</option>
+                  {accounts.map((a) => (
+                    <option key={a.user} value={a.user}>
+                      📱 {a.user} {a.name ? `(${a.name})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={handleImportPastedNumbers}
+                disabled={!addNumbersInput.trim()}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Pasted Numbers to Queue</span>
+              </button>
+            </div>
+
+            {addNumbersFeedback && (
+              <div className="p-3 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-xs rounded-xl border border-emerald-300 dark:border-emerald-800 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{addNumbersFeedback}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Global Database Search & Filtering Toolbar */}
         <div className="space-y-3 pt-2">
@@ -537,6 +862,7 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                       )}
                     </button>
                   </th>
+                  <th className="px-3 py-3 w-10 text-center">#</th>
                   <th className="px-3 py-3 min-w-[130px]">Client / Contact Name</th>
                   <th className="px-3 py-3 min-w-[120px]">Phone Number</th>
                   <th className="px-3 py-3 min-w-[100px]">Gateway Status</th>
@@ -550,9 +876,9 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80 font-mono text-slate-800 dark:text-slate-200">
-                {displayRecords.length === 0 ? (
+                {paginatedRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-12 text-center text-slate-400 font-sans">
+                    <td colSpan={12} className="px-4 py-12 text-center text-slate-400 font-sans">
                       <div className="max-w-xs mx-auto space-y-2">
                         <Database className="w-8 h-8 mx-auto text-slate-300 dark:text-slate-600" />
                         <p className="font-bold text-xs text-slate-600 dark:text-slate-300">No database records found</p>
@@ -561,9 +887,10 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  displayRecords.map((r, i) => {
+                  paginatedRecords.map((r, i) => {
                     const isSelected = selectedPhones.has(r.phone);
                     const errorReason = r.last_error || r.delivery_reason || '-';
+                    const serialIndex = (pageSize === -1 ? 0 : (currentPage - 1) * pageSize) + i + 1;
 
                     return (
                       <tr
@@ -588,6 +915,11 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                               <Square className="w-4 h-4 text-slate-300 dark:text-slate-600" />
                             )}
                           </button>
+                        </td>
+
+                        {/* Serial Number */}
+                        <td className="px-3 py-2.5 text-center text-slate-400 dark:text-slate-500 font-bold text-[11px] font-mono">
+                          {serialIndex}
                         </td>
 
                         {/* Name Column with Edit Button */}
@@ -732,13 +1064,52 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
             </table>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500 font-sans">
-            <span>
-              Showing <strong>{displayRecords.length}</strong> of <strong>{records.length}</strong> total records in database
-            </span>
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-sans">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing <strong>{paginatedRecords.length}</strong> of <strong>{displayRecords.length}</strong> filtered ({records.length} total)
+              </span>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-slate-400">Rows:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs text-slate-800 dark:text-slate-200"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                  <option value={-1}>All ({displayRecords.length})</option>
+                </select>
+              </div>
+            </div>
 
-            <span className="text-[11px] text-slate-400">
-              💡 Tip: Double-click or hover on any row name to quickly edit client contact information.
+            {pageSize !== -1 && totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs font-bold text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  ← Prev
+                </button>
+                <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs font-bold text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+
+            <span className="text-[11px] text-slate-400 hidden lg:inline">
+              💡 Tip: Hover or edit any row name to update contact details.
             </span>
           </div>
         </div>
@@ -858,6 +1229,47 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Floating Action Toast Banner */}
+      {actionToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white font-extrabold px-4 py-3 rounded-2xl shadow-2xl text-xs flex items-center gap-2.5 border border-slate-700 animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{actionToast}</span>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-left">
+            <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
+              <span>{confirmModal.title}</span>
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              {confirmModal.message}
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const action = confirmModal.onConfirm;
+                  setConfirmModal(null);
+                  action();
+                }}
+                className={`px-4 py-2 ${confirmModal.confirmColor || 'bg-red-600 hover:bg-red-700'} text-white font-extrabold rounded-xl text-xs transition-colors cursor-pointer shadow-sm`}
+              >
+                {confirmModal.confirmLabel || 'Confirm Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

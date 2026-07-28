@@ -5,9 +5,19 @@ interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   activeAccountsCount: number;
+  pendingCount?: number;
+  totalCount?: number;
+  onSendAllRemaining?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, activeAccountsCount }) => {
+export const Header: React.FC<HeaderProps> = ({
+  activeTab,
+  setActiveTab,
+  activeAccountsCount,
+  pendingCount = 0,
+  totalCount = 0,
+  onSendAllRemaining,
+}) => {
   return (
     <>
       <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 px-4 sm:px-8">
@@ -24,6 +34,27 @@ export const Header: React.FC<HeaderProps> = ({ activeTab, setActiveTab, activeA
               <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
                 <CheckCircle2 className="h-3 w-3" /> Vercel Ready
               </span>
+              <div className="hidden lg:flex items-center gap-1.5">
+                <button
+                  onClick={() => setActiveTab('master_log')}
+                  title="Click to view pending numbers in Master Log"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors cursor-pointer"
+                >
+                  <span>⏳ Remaining:</span>
+                  <span className="font-mono text-sm font-black">{pendingCount}</span>
+                </button>
+
+                {onSendAllRemaining && pendingCount > 0 && (
+                  <button
+                    onClick={onSendAllRemaining}
+                    className="inline-flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all cursor-pointer animate-pulse"
+                    title="Send all remaining numbers from any available active API without account restrictions!"
+                  >
+                    <Send className="h-3 w-3" />
+                    <span>Send All Remaining (Any API)</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

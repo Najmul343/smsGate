@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { SmsAccount, SavedFolder } from '../types/sms';
+import { SmsAccount, SavedFolder, SmsRecord } from '../types/sms';
 import { normalizePhone } from '../utils/normalize';
-import { loadSavedFolders, saveSavedFolders } from '../utils/dbStore';
+import { loadSavedFolders, saveSavedFolders, loadRecords, insertNumbers, getMessageVariants, setMessageVariants, getRandomMessageVariant } from '../utils/dbStore';
+import { MessageVariantsEditor } from './MessageVariantsEditor';
 import { FileSpreadsheet, Clipboard, Plus, Trash2, Save, Send, Sparkles, CheckCircle2, AlertCircle, RefreshCw, FolderPlus, FileText } from 'lucide-react';
 
 interface RowData {
@@ -16,23 +17,31 @@ interface RowData {
 interface LiveExcelGridProps {
   accounts: SmsAccount[];
   lastMessage: string;
+  messageVariants?: string[];
   onSaveLastMessage: (msg: string) => void;
-  onSplitAndStart: (numbers: string[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
+  onSaveMessageVariants?: (variants: string[]) => void;
+  onSplitAndStart: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
   initialNumbers?: string[];
   initialSheetName?: string;
   initialFolderName?: string;
   onSaveComplete?: () => void;
+  onRecordsUpdated?: (updated: SmsRecord[]) => void;
+  onSendAllRemaining?: () => void;
 }
 
 export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
   accounts,
   lastMessage,
+  messageVariants: propVariants,
   onSaveLastMessage,
+  onSaveMessageVariants,
   onSplitAndStart,
   initialNumbers = [],
   initialSheetName = '',
   initialFolderName = '',
   onSaveComplete,
+  onRecordsUpdated,
+  onSendAllRemaining,
 }) => {
   const [rows, setRows] = useState<RowData[]>([]);
   const [pasteInput, setPasteInput] = useState('');
@@ -43,11 +52,30 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
   const [newFolderName, setNewFolderName] = useState('');
   const [showFolderCreate, setShowFolderCreate] = useState(false);
 
-  const [messageText, setMessageText] = useState(lastMessage);
+  const [messageVariantsState, setMessageVariantsState] = useState<string[]>(
+    () => propVariants || getMessageVariants()
+  );
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>(accounts.filter(a => a.enabled).map(a => a.user));
   const [actionSummary, setActionSummary] = useState<string | null>(null);
 
   const activeAccountUsers = accounts.filter((a) => a.enabled).map((a) => a.user);
+
+  useEffect(() => {
+    if (propVariants) {
+      setMessageVariantsState(propVariants);
+    }
+  }, [propVariants]);
+
+  const handleUpdateVariants = (updated: string[]) => {
+    setMessageVariantsState(updated);
+    setMessageVariants(updated);
+    if (updated[0] !== undefined) {
+      onSaveLastMessage(updated[0]);
+    }
+    if (onSaveMessageVariants) {
+      onSaveMessageVariants(updated);
+    }
+  };
 
   // Initialize with initialNumbers if provided
   useEffect(() => {
@@ -146,9 +174,7 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
   };
 
   const handleClearAll = () => {
-    if (window.confirm('Clear all rows in the live grid?')) {
-      setRows([]);
-    }
+    setRows([]);
   };
 
   const handleCleanGrid = () => {
@@ -241,9 +267,28 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
       return;
     }
 
-    onSaveLastMessage(messageText);
-    const summary = onSplitAndStart(validItems, messageText, selectedAccounts);
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    onSaveLastMessage(activeMessage);
+    const summary = onSplitAndStart(validItems, activeMessage, selectedAccounts);
     setActionSummary(`🚀 Dispatched ${validItems.length} numbers across ${summary.length} active device(s)!`);
+  };
+
+  // Queue to Master 'Yet to Send' Database directly
+  const handleQueueToMaster = () => {
+    const validItems = validRows.map((r) => ({ phone: r.normalizedPhone, name: r.name }));
+    if (!validItems.length) {
+      alert('Grid contains no valid numbers to queue.');
+      return;
+    }
+
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    const currentRecords = loadRecords();
+    const targetRoute = selectedAccounts[0] || '';
+    const res = insertNumbers(currentRecords, validItems, targetRoute, activeMessage);
+    if (onRecordsUpdated) {
+      onRecordsUpdated(res.updatedRecords);
+    }
+    setActionSummary(`✅ Added ${res.newCount} new and ${res.requeuedCount} re-queued numbers to 'Yet to Send' database!`);
   };
 
   return (
@@ -560,20 +605,10 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
 
       {/* SMS Content & Account Dispatch Section */}
       <div className="p-4 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-4">
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-            SMS Message Text
-          </label>
-          <textarea
-            value={messageText}
-            onChange={(e) => {
-              setMessageText(e.target.value);
-              onSaveLastMessage(e.target.value);
-            }}
-            rows={2}
-            className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-white"
-          />
-        </div>
+        <MessageVariantsEditor
+          variants={messageVariantsState}
+          onChangeVariants={handleUpdateVariants}
+        />
 
         <div className="space-y-1.5">
           <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
@@ -605,14 +640,36 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={handleSendLiveGrid}
-          disabled={!validRows.length || !selectedAccounts.length}
-          className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          <Send className="w-4 h-4" />
-          <span>🚀 Split & Start Live Grid Across Chosen APIs</span>
-        </button>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <button
+            onClick={handleQueueToMaster}
+            disabled={!validRows.length}
+            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4" />
+            <span>📥 Add to 'Yet to Send' Queue</span>
+          </button>
+
+          <button
+            onClick={handleSendLiveGrid}
+            disabled={!validRows.length || !selectedAccounts.length}
+            className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+          >
+            <Send className="w-4 h-4" />
+            <span>🚀 Split & Start Grid</span>
+          </button>
+
+          {onSendAllRemaining && (
+            <button
+              onClick={onSendAllRemaining}
+              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 animate-pulse"
+              title="Remove account filters and send all remaining database numbers from any available API!"
+            >
+              <Send className="w-4 h-4" />
+              <span>🌐 Send All Remaining (Any API)</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {actionSummary && (

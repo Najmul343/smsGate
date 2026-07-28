@@ -1,24 +1,33 @@
-import React, { useState } from 'react';
-import { SmsAccount, SavedFolder } from '../types/sms';
+import React, { useState, useEffect } from 'react';
+import { SmsAccount, SavedFolder, SmsRecord } from '../types/sms';
 import { parseExcelFile } from '../utils/excelParser';
-import { loadSavedFolders, saveSavedFolders } from '../utils/dbStore';
+import { loadSavedFolders, saveSavedFolders, loadRecords, insertNumbers, getMessageVariants, setMessageVariants } from '../utils/dbStore';
 import { LiveExcelGrid } from './LiveExcelGrid';
-import { FileSpreadsheet, FolderPlus, Send, RefreshCw, Trash2, Folder, CheckCircle2, AlertCircle, Sparkles, Clipboard, Edit3 } from 'lucide-react';
+import { MessageVariantsEditor } from './MessageVariantsEditor';
+import { FileSpreadsheet, FolderPlus, Send, RefreshCw, Trash2, Folder, CheckCircle2, AlertCircle, Sparkles, Clipboard, Edit3, Plus } from 'lucide-react';
 
 interface SendNumbersPanelProps {
   accounts: SmsAccount[];
   lastMessage: string;
+  messageVariants?: string[];
   onSaveLastMessage: (msg: string) => void;
-  onSplitAndStart: (numbers: string[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
+  onSaveMessageVariants?: (variants: string[]) => void;
+  onSplitAndStart: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
   onRetargetList: (numbers: string[], targetAccountUsers: string[]) => void;
+  onRecordsUpdated?: (updated: SmsRecord[]) => void;
+  onSendAllRemaining?: () => void;
 }
 
 export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   accounts,
   lastMessage,
+  messageVariants: propVariants,
   onSaveLastMessage,
+  onSaveMessageVariants,
   onSplitAndStart,
   onRetargetList,
+  onRecordsUpdated,
+  onSendAllRemaining,
 }) => {
   const [activeTab, setActiveTab] = useState<'quick' | 'live_grid' | 'library'>('live_grid');
 
@@ -27,8 +36,29 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   const [gridInitialSheetName, setGridInitialSheetName] = useState<string>('');
   const [gridInitialFolderName, setGridInitialFolderName] = useState<string>('');
 
+  // Message Variants State
+  const [messageVariantsState, setMessageVariantsState] = useState<string[]>(
+    () => propVariants || getMessageVariants()
+  );
+
+  useEffect(() => {
+    if (propVariants) {
+      setMessageVariantsState(propVariants);
+    }
+  }, [propVariants]);
+
+  const handleUpdateVariants = (updated: string[]) => {
+    setMessageVariantsState(updated);
+    setMessageVariants(updated);
+    if (updated[0] !== undefined) {
+      onSaveLastMessage(updated[0]);
+    }
+    if (onSaveMessageVariants) {
+      onSaveMessageVariants(updated);
+    }
+  };
+
   // Quick Upload State
-  const [messageText, setMessageText] = useState(lastMessage);
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>(accounts.map((a) => a.user));
   const [parsedQuickNumbers, setParsedQuickNumbers] = useState<string[]>([]);
   const [quickFileInfo, setQuickFileInfo] = useState<{ name: string; total: number; invalid: number; duplicate: number } | null>(null);
@@ -41,7 +71,6 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   const [renameTarget, setRenameTarget] = useState('');
   const [renameTo, setRenameTo] = useState('');
   const [selectedFile, setSelectedFile] = useState<string>('');
-  const [libMessage, setLibMessage] = useState(messageText);
   const [libSelectedAccounts, setLibSelectedAccounts] = useState<string[]>(accounts.map((a) => a.user));
   const [libActionMessage, setLibActionMessage] = useState<string>('');
 
@@ -76,8 +105,9 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
       alert('Please select at least one target account.');
       return;
     }
-    onSaveLastMessage(messageText);
-    const summary = onSplitAndStart(parsedQuickNumbers, messageText, selectedAccounts);
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    onSaveLastMessage(activeMessage);
+    const summary = onSplitAndStart(parsedQuickNumbers, activeMessage, selectedAccounts);
     setQuickSummary(summary);
   };
 
@@ -107,13 +137,11 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   };
 
   const handleDeleteFolder = (folderName: string) => {
-    if (window.confirm(`Delete folder '${folderName}' and all files inside it?`)) {
-      const updated = folders.filter((f) => f.name !== folderName);
-      setFolders(updated);
-      saveSavedFolders(updated);
-      if (selectedFolder === folderName) {
-        setSelectedFolder(updated[0]?.name || '');
-      }
+    const updated = folders.filter((f) => f.name !== folderName);
+    setFolders(updated);
+    saveSavedFolders(updated);
+    if (selectedFolder === folderName) {
+      setSelectedFolder(updated[0]?.name || '');
     }
   };
 
@@ -152,12 +180,37 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
   const currentFolderObj = folders.find((f) => f.name === selectedFolder);
   const currentFileObj = currentFolderObj?.files.find((f) => f.filename === selectedFile);
 
+  const handleQuickQueue = () => {
+    if (!parsedQuickNumbers.length) return;
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    const currentRecords = loadRecords();
+    const assignedRoute = selectedAccounts[0] || '';
+    const res = insertNumbers(currentRecords, parsedQuickNumbers, assignedRoute, activeMessage);
+    if (onRecordsUpdated) {
+      onRecordsUpdated(res.updatedRecords);
+    }
+    setQuickSummary([{ account: assignedRoute || 'Database', newCount: res.newCount, movedCount: res.requeuedCount }]);
+  };
+
+  const handleLibQueue = () => {
+    if (!currentFileObj || !currentFileObj.numbers.length) return;
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    const currentRecords = loadRecords();
+    const assignedRoute = libSelectedAccounts[0] || '';
+    const res = insertNumbers(currentRecords, currentFileObj.numbers, assignedRoute, activeMessage);
+    if (onRecordsUpdated) {
+      onRecordsUpdated(res.updatedRecords);
+    }
+    setLibActionMessage(`✅ Queued ${res.newCount} new and ${res.requeuedCount} re-queued numbers from '${currentFileObj.filename}' into 'Yet to Send' database!`);
+  };
+
   const handleLibSend = () => {
     if (!currentFileObj || !currentFileObj.numbers.length) {
       alert('Selected file has no numbers.');
       return;
     }
-    const summary = onSplitAndStart(currentFileObj.numbers, libMessage, libSelectedAccounts);
+    const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
+    const summary = onSplitAndStart(currentFileObj.numbers, activeMessage, libSelectedAccounts);
     setLibActionMessage(`✅ Dispatched '${currentFileObj.filename}' across ${libSelectedAccounts.length} account(s)!`);
   };
 
@@ -235,12 +288,16 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
         <LiveExcelGrid
           accounts={accounts}
           lastMessage={lastMessage}
+          messageVariants={messageVariantsState}
           onSaveLastMessage={onSaveLastMessage}
+          onSaveMessageVariants={handleUpdateVariants}
           onSplitAndStart={onSplitAndStart}
           initialNumbers={gridInitialNumbers}
           initialSheetName={gridInitialSheetName}
           initialFolderName={gridInitialFolderName}
           onSaveComplete={() => setFolders(loadSavedFolders())}
+          onRecordsUpdated={onRecordsUpdated}
+          onSendAllRemaining={onSendAllRemaining}
         />
       )}
 
@@ -275,22 +332,11 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
             )}
           </div>
 
-          {/* Message textarea */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-              Message to send
-            </label>
-            <textarea
-              value={messageText}
-              onChange={(e) => {
-                setMessageText(e.target.value);
-                onSaveLastMessage(e.target.value);
-              }}
-              rows={3}
-              placeholder="Type the SMS content message here..."
-              className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-slate-900 dark:focus:ring-white outline-none"
-            />
-          </div>
+          {/* Message Variants Editor */}
+          <MessageVariantsEditor
+            variants={messageVariantsState}
+            onChangeVariants={handleUpdateVariants}
+          />
 
           {/* Account selector */}
           <div className="space-y-1.5">
@@ -323,15 +369,26 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
             </div>
           </div>
 
-          {/* Trigger Button */}
-          <button
-            onClick={handleQuickSend}
-            disabled={!parsedQuickNumbers.length || !selectedAccounts.length}
-            className="w-full py-3 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Send className="w-4 h-4" />
-            <span>🚀 Split & Start Chosen APIs</span>
-          </button>
+          {/* Trigger Buttons */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              onClick={handleQuickQueue}
+              disabled={!parsedQuickNumbers.length}
+              className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Plus className="w-4 h-4" />
+              <span>📥 Add {parsedQuickNumbers.length} Numbers to Queue</span>
+            </button>
+
+            <button
+              onClick={handleQuickSend}
+              disabled={!parsedQuickNumbers.length || !selectedAccounts.length}
+              className="py-3 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Send className="w-4 h-4" />
+              <span>🚀 Split & Start Chosen APIs</span>
+            </button>
+          </div>
 
           {/* Execution Summary Table */}
           {quickSummary && (
@@ -491,19 +548,20 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
                     </select>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-                      Message to send
-                    </label>
-                    <textarea
-                      value={libMessage}
-                      onChange={(e) => setLibMessage(e.target.value)}
-                      rows={3}
-                      className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-xs"
-                    />
-                  </div>
+                  <MessageVariantsEditor
+                    variants={messageVariantsState}
+                    onChangeVariants={handleUpdateVariants}
+                  />
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    <button
+                      onClick={handleLibQueue}
+                      disabled={!selectedFile}
+                      className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      title="Add numbers from this file directly into 'Yet to Send' database"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> 📥 Queue
+                    </button>
                     <button
                       onClick={handleLibSend}
                       disabled={!selectedFile}
@@ -520,9 +578,9 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
                         setActiveTab('live_grid');
                       }}
                       disabled={!selectedFile}
-                      className="py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      className="py-2.5 px-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
                     >
-                      <Edit3 className="w-3.5 h-3.5" /> ✏️ Edit in Live Grid
+                      <Edit3 className="w-3.5 h-3.5" /> ✏️ Edit
                     </button>
                     <button
                       onClick={handleLibRetarget}

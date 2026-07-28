@@ -17,11 +17,39 @@ export function loadRecords(): SmsRecord[] {
   }
 }
 
-export function saveRecords(records: SmsRecord[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEYS.TRACKING, JSON.stringify(records));
-  } catch (err) {
-    console.error('Failed to save records to localStorage:', err);
+let pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRecordsToSave: SmsRecord[] | null = null;
+
+export function flushPendingRecords(): void {
+  if (pendingRecordsToSave !== null) {
+    try {
+      localStorage.setItem(STORAGE_KEYS.TRACKING, JSON.stringify(pendingRecordsToSave));
+    } catch (err) {
+      console.error('Failed to flush records to localStorage:', err);
+    }
+    pendingRecordsToSave = null;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushPendingRecords);
+}
+
+export function saveRecords(records: SmsRecord[], immediate: boolean = false): void {
+  pendingRecordsToSave = records;
+  if (immediate) {
+    if (pendingSaveTimer) {
+      clearTimeout(pendingSaveTimer);
+      pendingSaveTimer = null;
+    }
+    flushPendingRecords();
+    return;
+  }
+  if (!pendingSaveTimer) {
+    pendingSaveTimer = setTimeout(() => {
+      pendingSaveTimer = null;
+      flushPendingRecords();
+    }, 250);
   }
 }
 
@@ -44,6 +72,31 @@ export function setSetting(key: string, value: string): void {
   } catch (err) {
     console.error('Failed to set setting:', err);
   }
+}
+
+export function getMessageVariants(): string[] {
+  const v1 = getSetting('last_message', '');
+  const v2 = getSetting('msg_variant_2', '');
+  const v3 = getSetting('msg_variant_3', '');
+  const v4 = getSetting('msg_variant_4', '');
+  return [v1, v2, v3, v4];
+}
+
+export function setMessageVariants(variants: string[]): void {
+  const [v1 = '', v2 = '', v3 = '', v4 = ''] = variants;
+  setSetting('last_message', v1);
+  setSetting('msg_variant_2', v2);
+  setSetting('msg_variant_3', v3);
+  setSetting('msg_variant_4', v4);
+}
+
+export function getRandomMessageVariant(fallbackMessage?: string): string {
+  const variants = getMessageVariants().filter((v) => v && v.trim().length > 0);
+  if (variants.length > 0) {
+    const randomIndex = Math.floor(Math.random() * variants.length);
+    return variants[randomIndex];
+  }
+  return fallbackMessage || getSetting('last_message', '');
 }
 
 export function loadControlMap(): Record<string, { is_running: boolean; message: string }> {
@@ -129,14 +182,16 @@ export function getTabStats(records: SmsRecord[], assignedApi: string) {
 export function insertNumbers(
   records: SmsRecord[],
   numbers: (string | { phone: string; name?: string })[],
-  assignedApi: string
-): { updatedRecords: SmsRecord[]; newCount: number; skippedCount: number } {
+  assignedApi: string,
+  defaultMessage?: string
+): { updatedRecords: SmsRecord[]; newCount: number; skippedCount: number; requeuedCount: number } {
   const existingPhoneMap = new Map<string, SmsRecord>();
   records.forEach((r) => existingPhoneMap.set(r.phone, r));
 
   const now = getLocalTimestamp();
   let newCount = 0;
   let skippedCount = 0;
+  let requeuedCount = 0;
 
   numbers.forEach((item) => {
     const num = typeof item === 'string' ? item : item.phone;
@@ -153,7 +208,7 @@ export function insertNumbers(
         created_at: now,
         api_used: '',
         assigned_api: assignedApi,
-        message_sent: '',
+        message_sent: defaultMessage || '',
         auto_retry_count: 0,
       };
       records.push(newRec);
@@ -161,15 +216,63 @@ export function insertNumbers(
       newCount++;
     } else {
       const existing = existingPhoneMap.get(num)!;
-      if (nameVal && !existing.name) {
-        existing.name = nameVal;
+      if (existing.status !== 'SUCCESS') {
+        existing.status = 'PENDING';
+        existing.attempts = 0;
+        existing.last_error = '';
+        if (assignedApi) existing.assigned_api = assignedApi;
+        if (nameVal) existing.name = nameVal;
+        if (defaultMessage && !existing.message_sent) existing.message_sent = defaultMessage;
+        requeuedCount++;
+      } else {
+        if (nameVal && !existing.name) {
+          existing.name = nameVal;
+        }
+        if (assignedApi && !existing.assigned_api) {
+          existing.assigned_api = assignedApi;
+        }
+        if (defaultMessage && !existing.message_sent) {
+          existing.message_sent = defaultMessage;
+        }
+        skippedCount++;
       }
-      skippedCount++;
     }
   });
 
   saveRecords(records);
-  return { updatedRecords: [...records], newCount, skippedCount };
+  return { updatedRecords: [...records], newCount, skippedCount, requeuedCount };
+}
+
+export function unfilterAndPrepareAllRemaining(
+  records: SmsRecord[],
+  defaultMessage: string,
+  activeAccounts: { user: string; pwd: string }[]
+): { updatedRecords: SmsRecord[]; totalPending: number } {
+  if (!records.length) return { updatedRecords: records, totalPending: 0 };
+
+  let totalPending = 0;
+  const nAccounts = activeAccounts.length;
+
+  records.forEach((r) => {
+    if (r.status !== 'SUCCESS') {
+      r.status = 'PENDING';
+      r.attempts = 0;
+      r.last_error = '';
+      r.next_attempt_at = undefined;
+      if (defaultMessage && (!r.message_sent || r.message_sent === 'None')) {
+        r.message_sent = defaultMessage;
+      }
+      if (nAccounts > 0) {
+        r.assigned_api = activeAccounts[totalPending % nAccounts].user;
+      } else {
+        r.assigned_api = '';
+      }
+      totalPending++;
+    }
+  });
+
+  saveRecords(records);
+  return { updatedRecords: [...records], totalPending };
 }
 
 export function splitAndStartAll(

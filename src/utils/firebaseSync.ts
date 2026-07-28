@@ -73,9 +73,9 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
 
   try {
     const docRef = doc(db, 'license_data', cleanKey);
-    const payload: WorkspaceData = {
+    const rawPayload: WorkspaceData = {
       licenseKey: cleanKey,
-      accountsText: data.accountsText || '',
+      accountsText: data.accountsText !== undefined ? data.accountsText : '',
       accounts: data.accounts || [],
       records: data.records || [],
       folders: data.folders || [],
@@ -95,11 +95,14 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
         scheduleCount: 50,
         lastScheduleRun: '',
       },
-      lastMessage: data.lastMessage || '',
+      lastMessage: data.lastMessage !== undefined ? data.lastMessage : '',
       updatedAt: new Date().toISOString(),
     };
 
-    await setDoc(docRef, payload, { merge: true });
+    // Deep clean undefined fields since Firestore setDoc throws when encountering undefined values anywhere in the document
+    const cleanPayload = JSON.parse(JSON.stringify(rawPayload));
+
+    await setDoc(docRef, cleanPayload, { merge: true });
     return true;
   } catch (err) {
     console.error('Error saving workspace to cloud:', err);

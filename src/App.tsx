@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { SmsAccount, SmsRecord, RunSettings } from './types/sms';
-import { checkLicense } from './utils/license';
+import { checkLicense, extendActiveLicense } from './utils/license';
 import {
   loadRecords,
   saveRecords,
@@ -13,6 +13,10 @@ import {
   getLocalDateString,
   loadSavedFolders,
   saveSavedFolders,
+  unfilterAndPrepareAllRemaining,
+  getMessageVariants,
+  setMessageVariants,
+  getRandomMessageVariant,
 } from './utils/dbStore';
 import {
   fetchCloudWorkspace,
@@ -40,6 +44,15 @@ export function App() {
     getSetting('accounts_text', 'user1,pass1\nuser2,pass2')
   );
   const [lastMessage, setLastMessage] = useState<string>(getSetting('last_message', ''));
+  const [messageVariants, setMessageVariantsState] = useState<string[]>(() => getMessageVariants());
+
+  const handleSaveMessageVariants = (updated: string[]) => {
+    setMessageVariantsState(updated);
+    setMessageVariants(updated);
+    if (updated[0] !== undefined) {
+      setLastMessage(updated[0]);
+    }
+  };
 
   // Parse initial schedule days
   let initialScheduleDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -174,17 +187,19 @@ export function App() {
   // Parse accounts text into account objects
   const parsedAccounts: SmsAccount[] = React.useMemo(() => {
     if (!accountsText.trim()) return [];
-    const lines = accountsText.split('\n').map((l) => l.strip ? l.strip() : l.trim()).filter(Boolean);
+    const lines = accountsText.split('\n').map((l) => l.trim()).filter(Boolean);
     const accs: SmsAccount[] = [];
     lines.forEach((line) => {
       const parts = line.split(',');
-      if (parts.length === 2) {
+      if (parts.length >= 2) {
         const u = parts[0].trim();
         const p = parts[1].trim();
+        const name = parts.length >= 3 ? parts.slice(2).join(',').trim() : undefined;
         if (u && p) {
           accs.push({
             user: u,
             pwd: p,
+            name: name || undefined,
             enabled: !disabledAccounts[u],
           });
         }
@@ -194,6 +209,24 @@ export function App() {
   }, [accountsText, disabledAccounts]);
 
   const activeAccounts = parsedAccounts.filter((a) => a.enabled);
+
+  const handleUpdateAccountName = (accountUser: string, newName: string) => {
+    const lines = accountsText.split('\n');
+    const updatedLines = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      const parts = trimmed.split(',');
+      if (parts.length >= 2 && parts[0].trim() === accountUser) {
+        const u = parts[0].trim();
+        const p = parts[1].trim();
+        return newName.trim() ? `${u},${p},${newName.trim()}` : `${u},${p}`;
+      }
+      return line;
+    });
+    const updatedText = updatedLines.join('\n');
+    setAccountsText(updatedText);
+    setSetting('accounts_text', updatedText);
+  };
 
   // Sync settings when changed
   const updateSettings = (newSettings: Partial<RunSettings>) => {
@@ -251,6 +284,28 @@ export function App() {
     addLog(accountUser, `⏹️ Stopped route worker for ${accountUser}`);
   };
 
+  const handleSendAllRemainingFromAnyApi = () => {
+    const currentRecords = [...recordsRef.current];
+    const { updatedRecords, totalPending } = unfilterAndPrepareAllRemaining(currentRecords, lastMessage, activeAccounts);
+
+    if (totalPending === 0) {
+      alert('No remaining numbers found waiting to send.');
+      return;
+    }
+
+    setRecords(updatedRecords);
+    saveRecords(updatedRecords);
+
+    // Auto-start all enabled accounts so they immediately begin dispatching
+    activeAccounts.forEach((acc) => {
+      setRunningMap((prev) => ({ ...prev, [acc.user]: true }));
+      setRunning(acc.user, true, lastMessage);
+      addLog(acc.user, `🌐 Route activated for global dispatch (Any Available API)`);
+    });
+
+    alert(`🌐 Filter removed! Re-distributed ${totalPending} remaining numbers across all ${activeAccounts.length} active API accounts. Sending started!`);
+  };
+
   // Dispatch SMS worker loop - runs parallel dispatch across all active devices
   useEffect(() => {
     const runWorkerCycle = async () => {
@@ -270,11 +325,11 @@ export function App() {
             return;
           }
 
-          // Find pending record for this account
+          // Find pending record for this account or any unassigned record
           const pendingRecord = currentRecords.find(
             (r) =>
               r.status === 'PENDING' &&
-              r.assigned_api === acc.user &&
+              (r.assigned_api === acc.user || !r.assigned_api) &&
               r.attempts < settings.maxRetries &&
               (!r.next_attempt_at || r.next_attempt_at <= getLocalTimestamp())
           );
@@ -285,9 +340,14 @@ export function App() {
             return;
           }
 
+          // Ensure route & message are assigned (select random variant for human-like delivery)
+          pendingRecord.assigned_api = acc.user;
+          const chosenVariant = getRandomMessageVariant(pendingRecord.message_sent || lastMessage);
+          pendingRecord.message_sent = chosenVariant;
+
           // Send SMS request via serverless API endpoint
           const targetPhone = pendingRecord.phone;
-          const msgText = pendingRecord.message_sent || lastMessage;
+          const msgText = chosenVariant;
 
           try {
             const res = await fetch('/api/sms/send', {
@@ -467,6 +527,9 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         activeAccountsCount={activeAccounts.length}
+        pendingCount={records.filter((r) => r.status === 'PENDING').length}
+        totalCount={records.length}
+        onSendAllRemaining={handleSendAllRemainingFromAnyApi}
       />
 
       {/* Main Container Layout */}
@@ -481,6 +544,10 @@ export function App() {
           onToggleAccount={toggleAccount}
           runningMap={runningMap}
           onChangeLicenseKey={() => setShowLicenseModal(true)}
+          onExtendLicense={() => {
+            const updated = extendActiveLicense(365);
+            setLicenseInfo(updated);
+          }}
           onSelectAccountTab={(user) => {
             setActiveTab('accounts');
             setSelectedAccountTab(user);
@@ -496,6 +563,7 @@ export function App() {
           {activeTab === 'dashboard' && (
             <GlobalDashboard
               records={records}
+              accounts={parsedAccounts}
               dailyLimit={settings.dailyLimit}
               autoMode={settings.autoMode}
             />
@@ -505,10 +573,12 @@ export function App() {
             <SendNumbersPanel
               accounts={activeAccounts}
               lastMessage={lastMessage}
+              messageVariants={messageVariants}
               onSaveLastMessage={(msg) => {
                 setLastMessage(msg);
                 setSetting('last_message', msg);
               }}
+              onSaveMessageVariants={handleSaveMessageVariants}
               onSplitAndStart={(numbers, msg, targetAccountUsers) => {
                 const targetAccs = activeAccounts.filter((a) => targetAccountUsers.includes(a.user));
                 if (!targetAccs.length) return [];
@@ -582,6 +652,11 @@ export function App() {
                 setRecords(updated);
                 saveRecords(updated);
               }}
+              onRecordsUpdated={(updated) => {
+                setRecords(updated);
+                saveRecords(updated);
+              }}
+              onSendAllRemaining={handleSendAllRemainingFromAnyApi}
             />
           )}
 
@@ -619,7 +694,7 @@ export function App() {
                           ) : (
                             <span className="h-2 w-2 rounded-full bg-amber-400 shrink-0"></span>
                           )}
-                          <span>🤖 {acc.user}</span>
+                          <span>🤖 {acc.name ? `${acc.name} (${acc.user})` : acc.user}</span>
                         </button>
                       );
                     })}
@@ -635,12 +710,82 @@ export function App() {
                         isRunning={Boolean(runningMap[acc.user])}
                         onStart={handleStartAccount}
                         onStop={handleStopAccount}
+                        onUpdateAccountName={handleUpdateAccountName}
                         dailyLimit={settings.dailyLimit}
                         recentLogs={logsMap[acc.user] || []}
                         onRecordsUpdated={(updated) => {
                           setRecords(updated);
                           saveRecords(updated);
                         }}
+                        lastMessage={lastMessage}
+                        onSaveLastMessage={(msg) => {
+                          setLastMessage(msg);
+                          setSetting('last_message', msg);
+                        }}
+                        onSplitAndStart={(numbers, msg, targetAccountUsers) => {
+                          const targetAccs = activeAccounts.filter((a) => targetAccountUsers.includes(a.user));
+                          if (!targetAccs.length) return [];
+
+                          const normItems = numbers.map((item) =>
+                            typeof item === 'string'
+                              ? { phone: item, name: undefined }
+                              : { phone: item.phone, name: item.name }
+                          );
+
+                          const existingMap = new Map<string, SmsRecord>();
+                          records.forEach((r) => existingMap.set(r.phone, r));
+
+                          const redistributable = normItems.filter((item) => {
+                            const existing = existingMap.get(item.phone);
+                            return !existing || existing.status !== 'SUCCESS';
+                          });
+
+                          const nAccounts = targetAccs.length;
+                          const now = getLocalTimestamp();
+                          const summary: { account: string; newCount: number; movedCount: number }[] = [];
+
+                          const updatedRecords = [...records];
+
+                          targetAccs.forEach((aItem, i) => {
+                            const chunk = redistributable.filter((_, idx) => idx % nAccounts === i);
+                            let newCount = 0;
+                            let movedCount = 0;
+
+                            chunk.forEach((item) => {
+                              const existing = updatedRecords.find((r) => r.phone === item.phone);
+                              if (!existing) {
+                                updatedRecords.push({
+                                  phone: item.phone,
+                                  name: item.name,
+                                  status: 'PENDING',
+                                  attempts: 0,
+                                  last_error: '',
+                                  last_time: '',
+                                  created_at: now,
+                                  api_used: '',
+                                  assigned_api: aItem.user,
+                                  message_sent: msg,
+                                  auto_retry_count: 0,
+                                });
+                                newCount++;
+                              } else if (existing.status !== 'SUCCESS') {
+                                existing.assigned_api = aItem.user;
+                                existing.status = 'PENDING';
+                                if (item.name) existing.name = item.name;
+                                if (msg) existing.message_sent = msg;
+                                movedCount++;
+                              }
+                            });
+
+                            summary.push({ account: aItem.user, newCount, movedCount });
+                            handleStartAccount(aItem.user, msg);
+                          });
+
+                          setRecords(updatedRecords);
+                          saveRecords(updatedRecords);
+                          return summary;
+                        }}
+                        onSendAllRemaining={handleSendAllRemainingFromAnyApi}
                       />
                     ))}
                 </>
@@ -656,6 +801,7 @@ export function App() {
                 setRecords(updated);
                 saveRecords(updated);
               }}
+              onSendAllRemaining={handleSendAllRemainingFromAnyApi}
             />
           )}
 

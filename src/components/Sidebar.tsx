@@ -16,6 +16,7 @@ interface SidebarProps {
   onClearData: () => void;
   onTriggerScheduleNow?: () => void;
   onChangeLicenseKey?: () => void;
+  onExtendLicense?: () => void;
   isCloudSynced?: boolean;
 }
 
@@ -33,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onClearData,
   onTriggerScheduleNow,
   onChangeLicenseKey,
+  onExtendLicense,
   isCloudSynced = true,
 }) => {
   const [copiedKey, setCopiedKey] = useState(false);
@@ -94,20 +96,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         </div>
 
+        {/* Extend Days & Switch Key Actions */}
+        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60 text-[10px]">
+          {onExtendLicense && (
+            <button
+              onClick={onExtendLicense}
+              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg transition-all shadow-sm flex items-center gap-1 cursor-pointer"
+              title="Add +365 days to active license key"
+            >
+              <span>⚡ Extend +365 Days</span>
+            </button>
+          )}
+
+          {onChangeLicenseKey && (
+            <button
+              onClick={onChangeLicenseKey}
+              className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/80 hover:bg-emerald-200 dark:hover:bg-emerald-800 text-emerald-800 dark:text-emerald-200 font-extrabold rounded-lg transition-colors cursor-pointer"
+            >
+              🔑 Switch Key
+            </button>
+          )}
+        </div>
+
         {/* Cloud Status Indicator */}
         <div className="flex items-center justify-between text-[11px] pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60">
           <span className="flex items-center gap-1.5 font-bold text-emerald-700 dark:text-emerald-400">
             <CloudCheck className="w-4 h-4 text-emerald-500 animate-pulse" />
             <span>Cloud Sync Active</span>
           </span>
-          {onChangeLicenseKey && (
-            <button
-              onClick={onChangeLicenseKey}
-              className="text-[10px] text-emerald-800 dark:text-emerald-300 hover:underline font-extrabold"
-            >
-              🔑 Switch Key
-            </button>
-          )}
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
+            Firestore Ready
+          </span>
         </div>
       </div>
 
@@ -125,14 +144,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
               <Users className="w-3.5 h-3.5 text-slate-500" /> API Accounts
             </label>
-            <span className="text-[10px] text-slate-400 font-mono">Format: username,password</span>
+            <span className="text-[10px] text-slate-400 font-mono">user,pass,Name (opt)</span>
           </div>
 
           <textarea
             value={accountsText}
             onChange={(e) => onAccountsTextChange(e.target.value)}
             rows={4}
-            placeholder={`username1,password1\nusername2,password2`}
+            placeholder={`username1,password1,Primary SIM\nusername2,password2,Secondary Route`}
             className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-slate-900 dark:focus:ring-white outline-none resize-none"
           />
 
@@ -168,7 +187,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <span className="h-2.5 w-2.5 rounded-full bg-slate-400 shrink-0" title="Device Disabled"></span>
                       )}
 
-                      <span className="font-mono font-medium truncate">{acc.user}</span>
+                      <div className="flex flex-col min-w-0 flex-1">
+                        {acc.name ? (
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span className="font-bold text-slate-900 dark:text-white truncate">{acc.name}</span>
+                            <span className="font-mono text-[10px] text-slate-400 shrink-0">({acc.user})</span>
+                          </div>
+                        ) : (
+                          <span className="font-mono font-medium truncate">{acc.user}</span>
+                        )}
+                      </div>
                       
                       <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-tight shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
                         {acc.enabled ? (isRunning ? 'Running' : 'Ready') : 'Disabled'}

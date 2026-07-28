@@ -61,3 +61,18 @@ export function saveLicense(key: string, days: number = 365): boolean {
   }
 }
 
+export function extendActiveLicense(daysToAdd: number = 365): LicenseStatus {
+  try {
+    const status = checkLicense();
+    let currentKey = status.activeKey || 'PRO-NAJAM-1111';
+    let currentDays = status.daysLeft > 0 ? status.daysLeft : 0;
+    const newTotalDays = currentDays + daysToAdd;
+    
+    saveLicense(currentKey, newTotalDays);
+    return checkLicense();
+  } catch {
+    saveLicense('PRO-NAJAM-1111', daysToAdd);
+    return checkLicense();
+  }
+}
+

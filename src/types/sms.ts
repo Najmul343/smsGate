@@ -1,6 +1,7 @@
 export interface SmsAccount {
   user: string;
   pwd: string;
+  name?: string;
   enabled: boolean;
 }
 
