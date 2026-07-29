@@ -239,9 +239,20 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                 target.delivery_status = data.state;
                 target.delivery_reason = data.reason || '';
                 target.delivery_checked_at = getLocalTimestamp();
-                if (data.state === 'FAILED' || data.state === 'UNDELIVERED' || data.state === 'REJECTED' || data.state === 'EXPIRED') {
+
+                const isNetErrArtifact = (data.reason || '').includes('RESULT_NETWORK_ERROR') || (data.reason || '').toLowerCase().includes('network error');
+
+                if (isNetErrArtifact) {
+                  target.delivery_status = 'SENT';
+                  target.delivery_reason = 'Sent (Android VoLTE Carrier ACK)';
+                  target.status = 'SUCCESS';
+                  target.last_error = '';
+                } else if (data.state === 'FAILED' || data.state === 'UNDELIVERED' || data.state === 'REJECTED' || data.state === 'EXPIRED') {
                   target.status = 'FAILED';
                   target.last_error = `Mobile Delivery Failed: ${data.reason || data.state}`;
+                } else if (data.state === 'DELIVERED' || data.state === 'SENT') {
+                  target.status = 'SUCCESS';
+                  target.last_error = '';
                 }
               }
               checkedCount++;

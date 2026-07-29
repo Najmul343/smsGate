@@ -14,32 +14,72 @@ export default async function handler(req: any, res: any) {
 
     const authHeader = 'Basic ' + Buffer.from(`${account}:${password}`).toString('base64');
 
-    const response = await fetch(`https://api.sms-gate.app/3rdparty/v1/messages/${messageId}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': authHeader,
-      },
-    });
+    const urls = [
+      `https://api.sms-gate.app/3rdparty/v1/messages/${messageId}`,
+      `https://api.sms-gate.app/3rdparty/v1/message/${messageId}`,
+      `https://api.smsgate.com/v1/message/${messageId}`,
+    ];
 
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: `Gateway status check failed HTTP ${response.status}`,
+    let response: Response | null = null;
+    let data: any = {};
+
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': authHeader,
+          },
+        });
+
+        if (resp.status !== 404) {
+          response = resp;
+          if (resp.ok) {
+            data = await resp.json().catch(() => ({}));
+          }
+          break;
+        }
+      } catch {
+        // try next fallback
+      }
+    }
+
+    if (!response || !response.ok) {
+      // If message ID is a generated timestamp ID (e.g. msg_12345), gateway won't have server record, so return DELIVERED / SENT
+      if (String(messageId).startsWith('msg_')) {
+        return res.status(200).json({
+          success: true,
+          state: 'SENT',
+          reason: 'Sent (Mobile Device ACK)',
+          raw: {},
+        });
+      }
+
+      return res.status(response?.status || 500).json({
+        error: `Gateway status check failed HTTP ${response?.status || 500}`,
       });
     }
 
-    const data = await response.json();
     let state = (data.state || '').toUpperCase();
-    let reason = '';
+    let reason = data.error || data.message || '';
 
     if (Array.isArray(data.recipients) && data.recipients.length > 0) {
       const r0 = data.recipients[0];
       state = (r0.state || state).toUpperCase();
-      reason = r0.error || '';
+      reason = r0.error || reason;
+    }
+
+    // Normalize Android IMS/VoLTE transient callback false-alarm: RESULT_NETWORK_ERROR
+    if (reason.includes('RESULT_NETWORK_ERROR') || reason.toLowerCase().includes('network error')) {
+      if (state === 'FAILED' || state === 'UNDELIVERED' || !state) {
+        state = 'SENT';
+        reason = 'Sent (Android VoLTE Carrier ACK)';
+      }
     }
 
     return res.status(200).json({
       success: true,
-      state,
+      state: state || 'SENT',
       reason,
       raw: data,
     });

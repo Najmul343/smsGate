@@ -191,6 +191,22 @@ export const AccountTab: React.FC<AccountTabProps> = ({
     return { total, delivered, sent, failed, pending, avgTries };
   }, [filteredAccountRecords]);
 
+  // Account Logs Pagination
+  const [pageSize, setPageSize] = useState<number>(100);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedDateMode, customDate, statusFilter, searchQuery, pageSize]);
+
+  const paginatedAccountRecords = useMemo(() => {
+    if (pageSize === -1) return filteredAccountRecords;
+    const start = (currentPage - 1) * pageSize;
+    return filteredAccountRecords.slice(start, start + pageSize);
+  }, [filteredAccountRecords, currentPage, pageSize]);
+
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredAccountRecords.length / pageSize));
+
   // Re-queue single record for this account
   const handleRequeueSingle = (phone: string) => {
     const copy = [...records];
@@ -585,7 +601,7 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono text-slate-800 dark:text-slate-200">
-                {filteredAccountRecords.length === 0 ? (
+                {paginatedAccountRecords.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-6 text-center text-slate-400 font-sans">
                       <div className="space-y-1">
@@ -596,11 +612,12 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredAccountRecords.map((r, i) => {
+                  paginatedAccountRecords.map((r, i) => {
                     const err = r.last_error || r.delivery_reason;
+                    const serialIndex = (pageSize === -1 ? 0 : (currentPage - 1) * pageSize) + i + 1;
                     return (
                       <tr key={r.phone + i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                        <td className="px-3 py-2 text-center text-slate-400 dark:text-slate-500 font-bold text-[11px] font-mono">{i + 1}</td>
+                        <td className="px-3 py-2 text-center text-slate-400 dark:text-slate-500 font-bold text-[11px] font-mono">{serialIndex}</td>
                         <td className="px-3 py-2 font-bold text-slate-900 dark:text-white">{r.phone}</td>
                         <td className="px-3 py-2 font-sans text-slate-600 dark:text-slate-300 truncate max-w-[100px]">
                           {r.name || <span className="text-slate-400 italic text-[10px]">-</span>}
@@ -642,7 +659,7 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                           {(r.status === 'FAILED' || r.delivery_status === 'FAILED') && (
                             <button
                               onClick={() => handleRequeueSingle(r.phone)}
-                              className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[10px] font-bold transition-all shadow-xs"
+                              className="px-2 py-0.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-[10px] font-bold transition-all shadow-xs cursor-pointer"
                               title="Re-queue this number"
                             >
                               Retry
@@ -655,6 +672,51 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-sans">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing <strong>{paginatedAccountRecords.length}</strong> of <strong>{filteredAccountRecords.length}</strong> filtered ({accountRecords.length} total for {account.user})
+              </span>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] text-slate-400">Rows:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="px-2 py-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs text-slate-800 dark:text-slate-200"
+                >
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                  <option value={-1}>All ({filteredAccountRecords.length})</option>
+                </select>
+              </div>
+            </div>
+
+            {pageSize !== -1 && totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs font-bold text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  ← Prev
+                </button>
+                <span className="text-xs font-bold font-mono text-slate-700 dark:text-slate-300">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="px-2.5 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs font-bold text-slate-700 dark:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Next →
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
