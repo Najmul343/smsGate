@@ -184,6 +184,24 @@ export function App() {
   // Activity logs deque map
   const [logsMap, setLogsMap] = useState<Record<string, string[]>>({});
 
+  // Account custom daily limits map (user -> limit)
+  const [accountLimits, setAccountLimits] = useState<Record<string, number>>(() => {
+    try {
+      const raw = getSetting('account_daily_limits', '{}');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleUpdateAccountLimit = (accountUser: string, limit: number) => {
+    setAccountLimits((prev) => {
+      const updated = { ...prev, [accountUser]: limit };
+      setSetting('account_daily_limits', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   // Parse accounts text into account objects
   const parsedAccounts: SmsAccount[] = React.useMemo(() => {
     if (!accountsText.trim()) return [];
@@ -196,17 +214,19 @@ export function App() {
         const p = parts[1].trim();
         const name = parts.length >= 3 ? parts.slice(2).join(',').trim() : undefined;
         if (u && p) {
+          const customLimit = accountLimits[u];
           accs.push({
             user: u,
             pwd: p,
             name: name || undefined,
             enabled: !disabledAccounts[u],
+            dailyLimit: customLimit && customLimit > 0 ? customLimit : settings.dailyLimit,
           });
         }
       }
     });
     return accs;
-  }, [accountsText, disabledAccounts]);
+  }, [accountsText, disabledAccounts, accountLimits, settings.dailyLimit]);
 
   const activeAccounts = parsedAccounts.filter((a) => a.enabled);
 
@@ -317,10 +337,11 @@ export function App() {
         activeAccounts.map(async (acc) => {
           if (!runningMapRef.current[acc.user]) return;
 
-          // Check daily limit
+          // Check daily limit for this specific API account
+          const effectiveDailyLimit = acc.dailyLimit && acc.dailyLimit > 0 ? acc.dailyLimit : settings.dailyLimit;
           const sentToday = getTodaysSuccessCount(currentRecords, acc.user);
-          if (sentToday >= settings.dailyLimit) {
-            addLog(acc.user, `🛑 Daily limit reached (${settings.dailyLimit}). Pausing.`);
+          if (sentToday >= effectiveDailyLimit) {
+            addLog(acc.user, `🛑 Daily limit reached for ${acc.name || acc.user} (${sentToday}/${effectiveDailyLimit}). Pausing.`);
             setRunningMap((prev) => ({ ...prev, [acc.user]: false }));
             return;
           }
@@ -429,6 +450,109 @@ export function App() {
     const interval = setInterval(runWorkerCycle, (settings.delayMin || 3) * 1000);
     return () => clearInterval(interval);
   }, [activeAccounts, settings]);
+
+  // Automated Real-Time Mobile Delivery Monitoring Engine (Runs every 10s)
+  useEffect(() => {
+    if (!activeAccounts.length) return;
+
+    const checkMobileDeliveryStates = async () => {
+      const currentRecords = [...recordsRef.current];
+      // Candidate records that have SMSGate message IDs and need mobile delivery state updates
+      const candidates = currentRecords.filter(
+        (r) =>
+          r.message_id &&
+          r.message_id.length > 5 &&
+          !r.message_id.startsWith('msg_') &&
+          r.delivery_status !== 'DELIVERED' &&
+          r.delivery_status !== 'FAILED' &&
+          r.status !== 'PENDING'
+      ).slice(0, 15);
+
+      if (candidates.length === 0) return;
+
+      let modified = false;
+
+      for (const cand of candidates) {
+        const acc = activeAccounts.find((a) => a.user === cand.api_used || a.user === cand.assigned_api) || activeAccounts[0];
+        if (!acc) continue;
+
+        try {
+          const res = await fetch(
+            `/api/sms/delivery?messageId=${encodeURIComponent(cand.message_id!)}&account=${encodeURIComponent(acc.user)}&password=${encodeURIComponent(acc.pwd)}`
+          );
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.state) {
+              const target = currentRecords.find((r) => r.phone === cand.phone);
+              if (target) {
+                const oldStatus = target.status;
+                const oldDeliveryStatus = target.delivery_status;
+
+                const isNetErrArtifact = (data.reason || '').includes('RESULT_NETWORK_ERROR') || (data.reason || '').toLowerCase().includes('network error');
+
+                if (isNetErrArtifact) {
+                  target.delivery_status = 'SENT';
+                  target.delivery_reason = 'Sent (Android VoLTE Carrier ACK)';
+                  target.status = 'SUCCESS';
+                  target.last_error = '';
+                } else if (data.state === 'FAILED' || data.state === 'UNDELIVERED' || data.state === 'REJECTED' || data.state === 'EXPIRED') {
+                  target.status = 'FAILED';
+                  target.delivery_status = 'FAILED';
+                  target.delivery_reason = data.reason || data.state;
+                  target.last_error = `Mobile App Failed: ${data.reason || data.state}`;
+
+                  if (oldStatus !== 'FAILED' || oldDeliveryStatus !== 'FAILED') {
+                    addLog(acc.user, `❌ ${target.phone} Failed on Mobile: ${data.reason || data.state}`);
+                    modified = true;
+
+                    // Auto-hop if Auto Mode is ON and other accounts exist
+                    if (settings.autoMode && activeAccounts.length > 1) {
+                      const otherAccounts = activeAccounts.filter((a) => a.user !== acc.user);
+                      if (otherAccounts.length > 0 && (target.auto_retry_count || 0) < 2) {
+                        const nextAcc = otherAccounts[0];
+                        target.status = 'PENDING';
+                        target.attempts = 0;
+                        target.assigned_api = nextAcc.user;
+                        target.auto_retry_count = (target.auto_retry_count || 0) + 1;
+                        target.next_attempt_at = undefined;
+                        addLog(acc.user, `🔀 Auto-hopped failed mobile msg ${target.phone} to ${nextAcc.user}`);
+                      }
+                    }
+                  }
+                } else if (data.state === 'DELIVERED') {
+                  target.status = 'SUCCESS';
+                  target.delivery_status = 'DELIVERED';
+                  target.delivery_reason = 'Confirmed Delivered to Recipient Phone';
+                  target.last_error = '';
+                  if (oldDeliveryStatus !== 'DELIVERED') {
+                    addLog(acc.user, `🎯 ${target.phone} Confirmed Delivered on Recipient Handset!`);
+                    modified = true;
+                  }
+                } else if (data.state === 'SENT') {
+                  if (target.delivery_status !== 'SENT') {
+                    target.delivery_status = 'SENT';
+                    target.delivery_reason = data.reason || 'Sent by Mobile Device';
+                    modified = true;
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // ignore transient network glitch
+        }
+      }
+
+      if (modified) {
+        setRecords([...currentRecords]);
+        saveRecords(currentRecords);
+      }
+    };
+
+    const deliveryInterval = setInterval(checkMobileDeliveryStates, 10000);
+    return () => clearInterval(deliveryInterval);
+  }, [activeAccounts, settings.autoMode]);
 
   // Scheduled Auto-Send (Cron Scheduler) Function
   const triggerScheduleCheck = async (isManual = false) => {
@@ -717,6 +841,7 @@ export function App() {
                         onStart={handleStartAccount}
                         onStop={handleStopAccount}
                         onUpdateAccountName={handleUpdateAccountName}
+                        onUpdateAccountLimit={handleUpdateAccountLimit}
                         dailyLimit={settings.dailyLimit}
                         recentLogs={logsMap[acc.user] || []}
                         onRecordsUpdated={(updated) => {

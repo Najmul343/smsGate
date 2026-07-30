@@ -14,10 +14,20 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'Invalid payload: message and phoneNumbers array are required' });
     }
 
+    // Sanitize phone numbers: remove spaces, dashes, brackets, non-digits except leading +
+    const cleanNumbers = phoneNumbers.map((p: string) => {
+      let cleaned = String(p || '').trim().replace(/[^\d+]/g, '');
+      return cleaned;
+    }).filter(Boolean);
+
+    if (cleanNumbers.length === 0) {
+      return res.status(400).json({ error: 'Invalid phone numbers format.' });
+    }
+
     const authHeader = 'Basic ' + Buffer.from(`${account}:${password}`).toString('base64');
     const payload = {
       message,
-      phoneNumbers,
+      phoneNumbers: cleanNumbers,
       withDeliveryReport: withDeliveryReport ?? true,
     };
 

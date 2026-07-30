@@ -196,6 +196,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         ) : (
                           <span className="font-mono font-medium truncate">{acc.user}</span>
                         )}
+                        <span className="text-[10px] font-mono text-amber-600 dark:text-amber-400 font-semibold">
+                          Max {acc.dailyLimit || settings.dailyLimit}/day
+                        </span>
                       </div>
                       
                       <span className="text-[9px] px-1.5 py-0.2 rounded font-bold uppercase tracking-tight shrink-0 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">

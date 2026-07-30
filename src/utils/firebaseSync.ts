@@ -122,7 +122,7 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
     if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
       console.warn('⚡ Firestore daily free quota reached. Operating safely in local storage mode.');
       isQuotaExceeded = true;
-      quotaExceededResetTime = Date.now() + 5 * 60 * 1000; // 5-minute backoff
+      quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000; // 24-hour daily reset backoff
     } else {
       console.error('Error saving workspace to cloud:', err);
     }
@@ -156,7 +156,7 @@ export function subscribeCloudWorkspace(
         if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || error?.code === 'resource-exhausted') {
           console.warn('⚡ Firestore subscription paused due to daily free quota limits. System running in high-speed local mode.');
           isQuotaExceeded = true;
-          quotaExceededResetTime = Date.now() + 15 * 60 * 1000;
+          quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000;
           if (unsubRef) {
             try { unsubRef(); } catch {}
           }

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { SmsAccount, SmsRecord } from '../types/sms';
-import { getGlobalStats, getDeliveryStats, getLocalDateString } from '../utils/dbStore';
+import { getGlobalStats, getDeliveryStats, getLocalDateString, getTodaysSuccessCount } from '../utils/dbStore';
 import { Smartphone, Clock, Send, AlertTriangle, CheckCircle2, ShieldAlert, RefreshCw, Trophy, Bot, TrendingUp, Activity, Calendar, Filter, Search, Download, FileText } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -696,6 +696,7 @@ export const GlobalDashboard: React.FC<GlobalDashboardProps> = ({ records, accou
               <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase tracking-wider text-[10px]">
                 <tr>
                   <th className="px-4 py-2 rounded-l-lg">API Account / Device</th>
+                  <th className="px-4 py-2">Today's Max Limit</th>
                   <th className="px-4 py-2">Total Assigned</th>
                   <th className="px-4 py-2">Gateway Sent</th>
                   <th className="px-4 py-2">Confirmed Delivered</th>
@@ -703,19 +704,45 @@ export const GlobalDashboard: React.FC<GlobalDashboardProps> = ({ records, accou
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
-                {leaderboard.map((item) => (
-                  <tr key={item.api_used} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                    <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-slate-200">{getApiDisplayName(item.api_used)}</td>
-                    <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">{item.total_count}</td>
-                    <td className="px-4 py-2.5 text-blue-600 dark:text-blue-400">{item.success_count}</td>
-                    <td className="px-4 py-2.5 font-bold text-emerald-600 dark:text-emerald-400">{item.delivered_count}</td>
-                    <td className="px-4 py-2.5 text-right font-black text-emerald-600 dark:text-emerald-400">
-                      <span className="bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
-                        {item.rate}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {leaderboard.map((item) => {
+                  const accObj = accounts.find((a) => a.user === item.api_used);
+                  const effectiveLimit = accObj?.dailyLimit || dailyLimit;
+                  const sentToday = getTodaysSuccessCount(records, item.api_used);
+                  const pct = Math.min(100, Math.round((sentToday / effectiveLimit) * 100));
+                  const limitReached = sentToday >= effectiveLimit;
+
+                  return (
+                    <tr key={item.api_used} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <td className="px-4 py-2.5 font-bold text-slate-800 dark:text-slate-200">{getApiDisplayName(item.api_used)}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <span className="font-bold text-amber-600 dark:text-amber-400">{sentToday} / {effectiveLimit}</span>
+                            {limitReached && (
+                              <span className="bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded">
+                                🛑 MAX REACHED
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-24 bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${limitReached ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                              style={{ width: `${pct}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-600 dark:text-slate-400">{item.total_count}</td>
+                      <td className="px-4 py-2.5 text-blue-600 dark:text-blue-400">{item.success_count}</td>
+                      <td className="px-4 py-2.5 font-bold text-emerald-600 dark:text-emerald-400">{item.delivered_count}</td>
+                      <td className="px-4 py-2.5 text-right font-black text-emerald-600 dark:text-emerald-400">
+                        <span className="bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                          {item.rate}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

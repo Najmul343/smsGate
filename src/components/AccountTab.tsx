@@ -3,7 +3,7 @@ import { SmsAccount, SmsRecord, AccountDeviceStatus } from '../types/sms';
 import { getTabStats, getTodaysSuccessCount, insertNumbers, getLocalDateString, saveRecords } from '../utils/dbStore';
 import { parseExcelFile } from '../utils/excelParser';
 import { LiveExcelGrid } from './LiveExcelGrid';
-import { Play, Square, Smartphone, Upload, CheckCircle2, Clock, Send, AlertTriangle, RefreshCw, Calendar, Filter, Search, Download, RotateCcw, FileText, Tag, Plus, Clipboard } from 'lucide-react';
+import { Play, Square, Smartphone, Upload, CheckCircle2, Clock, Send, AlertTriangle, RefreshCw, Calendar, Filter, Search, Download, RotateCcw, FileText, Tag, Plus, Clipboard, Zap } from 'lucide-react';
 
 interface AccountTabProps {
   account: SmsAccount;
@@ -12,6 +12,7 @@ interface AccountTabProps {
   onStart: (accountUser: string, messageText: string) => void;
   onStop: (accountUser: string) => void;
   onUpdateAccountName?: (accountUser: string, newName: string) => void;
+  onUpdateAccountLimit?: (accountUser: string, limit: number) => void;
   dailyLimit: number;
   recentLogs: string[];
   onRecordsUpdated: (updated: SmsRecord[]) => void;
@@ -28,6 +29,7 @@ export const AccountTab: React.FC<AccountTabProps> = ({
   onStart,
   onStop,
   onUpdateAccountName,
+  onUpdateAccountLimit,
   dailyLimit,
   recentLogs,
   onRecordsUpdated,
@@ -88,8 +90,16 @@ export const AccountTab: React.FC<AccountTabProps> = ({
   }, [account.user, account.pwd]);
 
   const stats = getTabStats(records, account.user);
+  const effectiveDailyLimit = account.dailyLimit && account.dailyLimit > 0 ? account.dailyLimit : dailyLimit;
   const sentToday = getTodaysSuccessCount(records, account.user);
-  const limitLeft = Math.max(0, dailyLimit - sentToday);
+  const limitLeft = Math.max(0, effectiveDailyLimit - sentToday);
+  const quotaPercent = Math.min(100, Math.round((sentToday / effectiveDailyLimit) * 100));
+
+  const [limitInputState, setLimitInputState] = useState<number>(effectiveDailyLimit);
+
+  useEffect(() => {
+    setLimitInputState(effectiveDailyLimit);
+  }, [account.user, account.dailyLimit, dailyLimit]);
 
   const [accountPasteInput, setAccountPasteInput] = useState('');
 
@@ -349,6 +359,94 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                 ⚪ Idle
               </span>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* ⚡ API SPECIFIC DAILY MAX LIMIT CONTROLS */}
+      <div className="bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/40 dark:to-orange-950/20 border border-amber-200 dark:border-amber-800/80 rounded-2xl p-4 shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-amber-500 shrink-0" />
+              <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">
+                ⚡ Max Sends for THIS API Today ({account.name || account.user})
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+              <span>Sent Today: <strong className="text-slate-900 dark:text-white font-mono font-bold">{sentToday}</strong> / <strong className="text-amber-600 dark:text-amber-400 font-mono font-bold">{effectiveDailyLimit}</strong></span>
+              <span className="text-slate-300 dark:text-slate-700">|</span>
+              {limitLeft === 0 ? (
+                <span className="text-red-600 dark:text-red-400 font-bold bg-red-100 dark:bg-red-950/80 px-2 py-0.5 rounded text-[11px] animate-pulse">
+                  🛑 DAILY LIMIT REACHED ({effectiveDailyLimit})
+                </span>
+              ) : (
+                <span className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">
+                  {limitLeft} sends remaining today
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/80 px-3 py-1.5 rounded-xl text-xs shadow-xs">
+              <span className="font-bold text-slate-500 dark:text-slate-400 text-[11px]">Set Limit:</span>
+              <input
+                type="number"
+                min={1}
+                max={100000}
+                value={limitInputState}
+                onChange={(e) => {
+                  const val = Number(e.target.value);
+                  setLimitInputState(val);
+                  if (val > 0) {
+                    onUpdateAccountLimit?.(account.user, val);
+                  }
+                }}
+                className="w-20 bg-transparent text-xs font-black font-mono text-slate-900 dark:text-white outline-none"
+                placeholder="180"
+              />
+              <span className="text-[10px] text-amber-600 font-bold">/day</span>
+            </div>
+
+            <div className="flex items-center gap-1 text-xs">
+              {[100, 200, 500, 1000].map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => {
+                    setLimitInputState(preset);
+                    onUpdateAccountLimit?.(account.user, preset);
+                  }}
+                  className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                    limitInputState === preset
+                      ? 'bg-amber-500 text-white shadow-xs'
+                      : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:bg-slate-100'
+                  }`}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Quota Progress Bar */}
+        <div className="space-y-1 pt-1">
+          <div className="flex justify-between text-[11px] font-mono font-bold text-slate-500 dark:text-slate-400">
+            <span>Daily Quota Usage ({quotaPercent}%)</span>
+            <span>{sentToday} of {effectiveDailyLimit} sent</span>
+          </div>
+          <div className="w-full bg-slate-200 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-500 ${
+                quotaPercent >= 100
+                  ? 'bg-red-500'
+                  : quotaPercent >= 80
+                  ? 'bg-amber-500'
+                  : 'bg-emerald-500'
+              }`}
+              style={{ width: `${quotaPercent}%` }}
+            ></div>
           </div>
         </div>
       </div>

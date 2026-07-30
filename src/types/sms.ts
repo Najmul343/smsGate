@@ -3,6 +3,7 @@ export interface SmsAccount {
   pwd: string;
   name?: string;
   enabled: boolean;
+  dailyLimit?: number;
 }
 
 export interface SmsRecord {
