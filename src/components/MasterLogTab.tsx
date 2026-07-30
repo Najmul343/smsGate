@@ -1030,7 +1030,15 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
                         {/* Failure Error Reason */}
                         <td className="px-3 py-2.5 font-sans text-[11px]">
                           {errorReason !== '-' ? (
-                            <span className="text-red-600 dark:text-red-400 font-mono text-[10px] break-all bg-red-50/60 dark:bg-red-950/40 px-1.5 py-0.5 rounded">
+                            <span
+                              className={`font-mono text-[10px] break-all px-1.5 py-0.5 rounded ${
+                                r.status === 'FAILED' || r.delivery_status === 'FAILED' || errorReason.toLowerCase().includes('fail') || errorReason.toLowerCase().includes('error')
+                                  ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50'
+                                  : r.delivery_status === 'DELIVERED'
+                                  ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50'
+                                  : 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50'
+                              }`}
+                            >
                               {errorReason}
                             </span>
                           ) : (

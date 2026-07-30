@@ -745,7 +745,15 @@ export const AccountTab: React.FC<AccountTabProps> = ({
                         </td>
                         <td className="px-3 py-2 font-sans text-[11px]">
                           {err ? (
-                            <span className="text-red-600 dark:text-red-400 font-mono text-[10px] bg-red-50 dark:bg-red-950/40 px-1 py-0.5 rounded truncate max-w-[150px] block">
+                            <span
+                              className={`font-mono text-[10px] px-1.5 py-0.5 rounded truncate max-w-[180px] block ${
+                                r.status === 'FAILED' || r.delivery_status === 'FAILED' || err.toLowerCase().includes('fail') || err.toLowerCase().includes('error')
+                                  ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50'
+                                  : r.delivery_status === 'DELIVERED'
+                                  ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/50'
+                                  : 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50'
+                              }`}
+                            >
                               {err}
                             </span>
                           ) : (
