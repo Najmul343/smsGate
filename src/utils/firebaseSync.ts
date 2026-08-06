@@ -68,29 +68,64 @@ let isQuotaExceeded = false;
 let quotaExceededResetTime = 0;
 
 /**
+ * Safely trims SMS records to ensure the overall Firestore document payload stays comfortably under the 1MB limit (~700 KB max for records).
+ */
+function safeTrimRecordsForCloud(records: SmsRecord[], targetMaxBytes: number = 700000): SmsRecord[] {
+  if (!records || records.length === 0) return [];
+
+  // Sanitize heavy strings in records if any
+  let cleanList = records.map((r) => {
+    const msg = r.message_sent && r.message_sent.length > 500 ? r.message_sent.slice(0, 500) : r.message_sent;
+    const err = r.last_error && r.last_error.length > 300 ? r.last_error.slice(0, 300) : r.last_error;
+    return {
+      ...r,
+      message_sent: msg,
+      last_error: err,
+    };
+  });
+
+  let stringified = JSON.stringify(cleanList);
+  if (stringified.length <= targetMaxBytes) {
+    return cleanList;
+  }
+
+  // Keep the most recent records from the end of the array
+  while (cleanList.length > 50 && stringified.length > targetMaxBytes) {
+    const dropCount = Math.max(10, Math.floor(cleanList.length * 0.15));
+    cleanList = cleanList.slice(dropCount);
+    stringified = JSON.stringify(cleanList);
+  }
+
+  return cleanList;
+}
+
+/**
  * Save workspace data to cloud Firestore for a given license key.
  */
 export async function saveCloudWorkspace(licenseKey: string, data: Partial<WorkspaceData>): Promise<boolean> {
   const cleanKey = licenseKey.trim().toUpperCase();
   if (!cleanKey) return false;
 
-  // If quota was previously exceeded, check if backoff period (5 min) has passed
+  // If quota was previously exceeded, check if backoff period has passed
   if (isQuotaExceeded) {
     if (Date.now() < quotaExceededResetTime) {
-      // Quietly return false to prevent spamming Firestore while quota is active
       return false;
     } else {
       isQuotaExceeded = false;
     }
   }
 
+  const docRef = doc(db, 'license_data', cleanKey);
+
   try {
-    const docRef = doc(db, 'license_data', cleanKey);
+    // Safely trim records so JSON payload stays under 700KB (Firestore 1MB total doc size limit)
+    const cloudRecords = safeTrimRecordsForCloud(data.records || [], 700000);
+
     const rawPayload: WorkspaceData = {
       licenseKey: cleanKey,
       accountsText: data.accountsText !== undefined ? data.accountsText : '',
       accounts: data.accounts || [],
-      records: data.records || [],
+      records: cloudRecords,
       folders: data.folders || [],
       settings: data.settings || {
         dailyLimit: 180,
@@ -112,17 +147,45 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
       updatedAt: new Date().toISOString(),
     };
 
-    // Deep clean undefined fields since Firestore setDoc throws when encountering undefined values anywhere in the document
+    // Deep clean undefined fields since Firestore setDoc throws when encountering undefined values
     const cleanPayload = JSON.parse(JSON.stringify(rawPayload));
 
     await setDoc(docRef, cleanPayload, { merge: true });
     return true;
   } catch (err: any) {
     const errMsg = String(err?.message || err?.code || err || '');
-    if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
+
+    if (
+      errMsg.includes('exceeds the maximum allowed size') ||
+      errMsg.includes('1,048,576') ||
+      errMsg.includes('1048576') ||
+      errMsg.includes('bytes')
+    ) {
+      console.warn('⚡ Cloud document size exceeded 1MB limit. Performing emergency record trim for cloud sync.');
+      if (data.records && data.records.length > 50) {
+        try {
+          // Emergency retry: keep latest 250 records
+          const emergencyRecords = data.records.slice(-250);
+          const emergencyPayload = JSON.parse(JSON.stringify({
+            licenseKey: cleanKey,
+            accountsText: data.accountsText !== undefined ? data.accountsText : '',
+            accounts: data.accounts || [],
+            records: emergencyRecords,
+            folders: data.folders || [],
+            settings: data.settings || {},
+            lastMessage: data.lastMessage !== undefined ? data.lastMessage : '',
+            updatedAt: new Date().toISOString(),
+          }));
+          await setDoc(docRef, emergencyPayload, { merge: true });
+          return true;
+        } catch (retryErr) {
+          console.error('Error during emergency trim retry:', retryErr);
+        }
+      }
+    } else if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
       console.warn('⚡ Firestore daily free quota reached. Operating safely in local storage mode.');
       isQuotaExceeded = true;
-      quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000; // 24-hour daily reset backoff
+      quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000;
     } else {
       console.error('Error saving workspace to cloud:', err);
     }

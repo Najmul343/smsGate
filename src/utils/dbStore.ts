@@ -183,7 +183,8 @@ export function insertNumbers(
   records: SmsRecord[],
   numbers: (string | { phone: string; name?: string })[],
   assignedApi: string,
-  defaultMessage?: string
+  defaultMessage?: string,
+  forceRetarget: boolean = false
 ): { updatedRecords: SmsRecord[]; newCount: number; skippedCount: number; requeuedCount: number } {
   const existingPhoneMap = new Map<string, SmsRecord>();
   records.forEach((r) => existingPhoneMap.set(r.phone, r));
@@ -216,13 +217,16 @@ export function insertNumbers(
       newCount++;
     } else {
       const existing = existingPhoneMap.get(num)!;
-      if (existing.status !== 'SUCCESS') {
+      if (existing.status !== 'SUCCESS' || forceRetarget) {
         existing.status = 'PENDING';
         existing.attempts = 0;
         existing.last_error = '';
+        delete (existing as any).delivery_status;
+        delete (existing as any).delivery_updated_at;
         if (assignedApi) existing.assigned_api = assignedApi;
         if (nameVal) existing.name = nameVal;
-        if (defaultMessage && !existing.message_sent) existing.message_sent = defaultMessage;
+        if (defaultMessage) existing.message_sent = defaultMessage;
+        existing.auto_retry_count = 0;
         requeuedCount++;
       } else {
         if (nameVal && !existing.name) {

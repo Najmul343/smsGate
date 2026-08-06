@@ -98,8 +98,14 @@ export function App() {
           setSetting('accounts_text', cloud.accountsText);
         }
         if (cloud.records && Array.isArray(cloud.records)) {
-          setRecords(cloud.records);
-          saveRecords(cloud.records);
+          setRecords((prev) => {
+            const map = new Map<string, SmsRecord>();
+            prev.forEach((r) => map.set(r.message_id || r.phone, r));
+            cloud.records?.forEach((r) => map.set(r.message_id || r.phone, r));
+            const merged = Array.from(map.values());
+            saveRecords(merged);
+            return merged;
+          });
         }
         if (cloud.folders && Array.isArray(cloud.folders)) {
           saveSavedFolders(cloud.folders);
@@ -132,8 +138,14 @@ export function App() {
         setSetting('accounts_text', cloud.accountsText);
       }
       if (cloud.records && Array.isArray(cloud.records)) {
-        setRecords(cloud.records);
-        saveRecords(cloud.records);
+        setRecords((prev) => {
+          const map = new Map<string, SmsRecord>();
+          prev.forEach((r) => map.set(r.message_id || r.phone, r));
+          cloud.records?.forEach((r) => map.set(r.message_id || r.phone, r));
+          const merged = Array.from(map.values());
+          saveRecords(merged);
+          return merged;
+        });
       }
       if (cloud.folders && Array.isArray(cloud.folders)) {
         saveSavedFolders(cloud.folders);
@@ -484,7 +496,7 @@ export function App() {
           if (res.ok) {
             const data = await res.json();
             if (data.state) {
-              const target = currentRecords.find((r) => r.phone === cand.phone);
+              const target = currentRecords.find((r) => r.id === cand.id || (r.message_id && r.message_id === cand.message_id) || r.phone === cand.phone);
               if (target) {
                 const oldStatus = target.status;
                 const oldDeliveryStatus = target.delivery_status;
@@ -709,7 +721,7 @@ export function App() {
                 setSetting('last_message', msg);
               }}
               onSaveMessageVariants={handleSaveMessageVariants}
-              onSplitAndStart={(numbers, msg, targetAccountUsers) => {
+              onSplitAndStart={(numbers, msg, targetAccountUsers, forceRetarget) => {
                 const targetAccs = activeAccounts.filter((a) => targetAccountUsers.includes(a.user));
                 if (!targetAccs.length) return [];
 
@@ -721,6 +733,7 @@ export function App() {
                 records.forEach((r) => existingMap.set(r.phone, r));
 
                 const redistributable = items.filter((item) => {
+                  if (forceRetarget) return true;
                   const rec = existingMap.get(item.phone);
                   return !rec || rec.status !== 'SUCCESS';
                 });
@@ -753,11 +766,16 @@ export function App() {
                         auto_retry_count: 0,
                       });
                       newCount++;
-                    } else if (existing.status !== 'SUCCESS') {
+                    } else if (existing.status !== 'SUCCESS' || forceRetarget) {
                       existing.assigned_api = acc.user;
                       existing.status = 'PENDING';
+                      existing.attempts = 0;
+                      existing.last_error = '';
+                      delete (existing as any).delivery_status;
+                      delete (existing as any).delivery_updated_at;
                       if (item.name) existing.name = item.name;
                       if (msg) existing.message_sent = msg;
+                      existing.auto_retry_count = 0;
                       movedCount++;
                     }
                   });
@@ -768,6 +786,9 @@ export function App() {
 
                 setRecords(updatedRecords);
                 saveRecords(updatedRecords);
+                if (licenseInfo?.activeKey) {
+                  saveCloudWorkspace(licenseInfo.activeKey, { records: updatedRecords });
+                }
                 return summary;
               }}
               onRetargetList={(numbers) => {
@@ -853,7 +874,7 @@ export function App() {
                           setLastMessage(msg);
                           setSetting('last_message', msg);
                         }}
-                        onSplitAndStart={(numbers, msg, targetAccountUsers) => {
+                        onSplitAndStart={(numbers, msg, targetAccountUsers, forceRetarget) => {
                           const targetAccs = activeAccounts.filter((a) => targetAccountUsers.includes(a.user));
                           if (!targetAccs.length) return [];
 
@@ -867,6 +888,7 @@ export function App() {
                           records.forEach((r) => existingMap.set(r.phone, r));
 
                           const redistributable = normItems.filter((item) => {
+                            if (forceRetarget) return true;
                             const existing = existingMap.get(item.phone);
                             return !existing || existing.status !== 'SUCCESS';
                           });
@@ -899,11 +921,16 @@ export function App() {
                                   auto_retry_count: 0,
                                 });
                                 newCount++;
-                              } else if (existing.status !== 'SUCCESS') {
+                              } else if (existing.status !== 'SUCCESS' || forceRetarget) {
                                 existing.assigned_api = aItem.user;
                                 existing.status = 'PENDING';
+                                existing.attempts = 0;
+                                existing.last_error = '';
+                                delete (existing as any).delivery_status;
+                                delete (existing as any).delivery_updated_at;
                                 if (item.name) existing.name = item.name;
                                 if (msg) existing.message_sent = msg;
+                                existing.auto_retry_count = 0;
                                 movedCount++;
                               }
                             });

@@ -18,7 +18,7 @@ interface AccountTabProps {
   onRecordsUpdated: (updated: SmsRecord[]) => void;
   lastMessage?: string;
   onSaveLastMessage?: (msg: string) => void;
-  onSplitAndStart?: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
+  onSplitAndStart?: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[], forceRetarget?: boolean) => { account: string; newCount: number; movedCount: number }[];
   onSendAllRemaining?: () => void;
 }
 

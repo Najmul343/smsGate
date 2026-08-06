@@ -56,6 +56,7 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
     () => propVariants || getMessageVariants()
   );
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>(accounts.filter(a => a.enabled).map(a => a.user));
+  const [forceRetargetMode, setForceRetargetMode] = useState(false);
   const [actionSummary, setActionSummary] = useState<string | null>(null);
 
   const activeAccountUsers = accounts.filter((a) => a.enabled).map((a) => a.user);
@@ -256,7 +257,8 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
   };
 
   // Send directly
-  const handleSendLiveGrid = () => {
+  const handleSendLiveGrid = (force?: boolean) => {
+    const isForce = force !== undefined ? force : forceRetargetMode;
     const validItems = validRows.map((r) => ({ phone: r.normalizedPhone, name: r.name }));
     if (!validItems.length) {
       alert('Grid contains no valid numbers to send.');
@@ -269,12 +271,13 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
 
     const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
     onSaveLastMessage(activeMessage);
-    const summary = onSplitAndStart(validItems, activeMessage, selectedAccounts);
-    setActionSummary(`🚀 Dispatched ${validItems.length} numbers across ${summary.length} active device(s)!`);
+    const summary = onSplitAndStart(validItems, activeMessage, selectedAccounts, isForce);
+    setActionSummary(`🚀 Dispatched ${validItems.length} numbers across ${summary.length} active device(s)${isForce ? ' (Force Retargeted All Numbers)' : ''}!`);
   };
 
   // Queue to Master 'Yet to Send' Database directly
-  const handleQueueToMaster = () => {
+  const handleQueueToMaster = (force?: boolean) => {
+    const isForce = force !== undefined ? force : forceRetargetMode;
     const validItems = validRows.map((r) => ({ phone: r.normalizedPhone, name: r.name }));
     if (!validItems.length) {
       alert('Grid contains no valid numbers to queue.');
@@ -284,11 +287,15 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
     const activeMessage = messageVariantsState.find((v) => v.trim().length > 0) || lastMessage;
     const currentRecords = loadRecords();
     const targetRoute = selectedAccounts[0] || '';
-    const res = insertNumbers(currentRecords, validItems, targetRoute, activeMessage);
+    const res = insertNumbers(currentRecords, validItems, targetRoute, activeMessage, isForce);
     if (onRecordsUpdated) {
       onRecordsUpdated(res.updatedRecords);
     }
-    setActionSummary(`✅ Added ${res.newCount} new and ${res.requeuedCount} re-queued numbers to 'Yet to Send' database!`);
+    setActionSummary(`✅ Added ${res.newCount} new and ${res.requeuedCount} re-queued numbers to 'Yet to Send' database${isForce ? ' (Force Retargeted All Numbers)' : ''}!`);
+  };
+
+  const handleForceRetargetAndSend = () => {
+    handleSendLiveGrid(true);
   };
 
   return (
@@ -640,23 +647,48 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Force Retarget Option Toggle */}
+        <div className="flex items-center justify-between p-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 rounded-xl">
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-300">
+            <input
+              type="checkbox"
+              checked={forceRetargetMode}
+              onChange={(e) => setForceRetargetMode(e.target.checked)}
+              className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 accent-amber-600 cursor-pointer"
+            />
+            <span>🎯 Force Retarget Mode (Reset & re-send numbers even if they were already sent or delivered before)</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <button
-            onClick={handleQueueToMaster}
+            onClick={() => handleQueueToMaster()}
             disabled={!validRows.length}
             className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Add numbers to 'Yet to Send' queue"
           >
             <Plus className="w-4 h-4" />
             <span>📥 Add to 'Yet to Send' Queue</span>
           </button>
 
           <button
-            onClick={handleSendLiveGrid}
+            onClick={() => handleSendLiveGrid()}
             disabled={!validRows.length || !selectedAccounts.length}
             className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Split numbers across selected active devices and start sending"
           >
             <Send className="w-4 h-4" />
             <span>🚀 Split & Start Grid</span>
+          </button>
+
+          <button
+            onClick={handleForceRetargetAndSend}
+            disabled={!validRows.length || !selectedAccounts.length}
+            className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Re-add these numbers and send immediately, even if they were already sent before"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>🔄 Force Retarget & Send</span>
           </button>
 
           {onSendAllRemaining && (

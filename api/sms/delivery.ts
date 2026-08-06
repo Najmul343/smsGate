@@ -77,6 +77,10 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    if (reason.includes('RESULT_NO_DEFAULT_SMS_APP') || reason.toLowerCase().includes('no default sms app')) {
+      reason = 'Device Action Required: Set SMSGate as Default SMS App in Android Settings -> Default Apps';
+    }
+
     return res.status(200).json({
       success: true,
       state: state || 'SENT',

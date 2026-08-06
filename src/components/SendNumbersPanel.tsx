@@ -12,7 +12,7 @@ interface SendNumbersPanelProps {
   messageVariants?: string[];
   onSaveLastMessage: (msg: string) => void;
   onSaveMessageVariants?: (variants: string[]) => void;
-  onSplitAndStart: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[]) => { account: string; newCount: number; movedCount: number }[];
+  onSplitAndStart: (numbers: (string | { phone: string; name?: string })[], message: string, targetAccountUsers: string[], forceRetarget?: boolean) => { account: string; newCount: number; movedCount: number }[];
   onRetargetList: (numbers: string[], targetAccountUsers: string[]) => void;
   onRecordsUpdated?: (updated: SmsRecord[]) => void;
   onSendAllRemaining?: () => void;
