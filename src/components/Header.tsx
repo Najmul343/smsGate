@@ -1,5 +1,5 @@
 import React from 'react';
-import { Smartphone, LayoutDashboard, Send, Users, Database, Server, CheckCircle2, ExternalLink } from 'lucide-react';
+import { Smartphone, LayoutDashboard, Send, Users, Database, Server, CheckCircle2, ExternalLink, MessageSquare } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: string;
@@ -85,6 +85,18 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             <button
+              onClick={() => setActiveTab('chat')}
+              className={`h-16 flex items-center gap-1.5 transition-all border-b-2 px-1 whitespace-nowrap ${
+                activeTab === 'chat'
+                  ? 'text-slate-900 dark:text-white border-slate-900 dark:border-white font-extrabold'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <MessageSquare className="h-4 w-4 text-indigo-500" />
+              <span>Message Box</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('accounts')}
               className={`h-16 flex items-center gap-1.5 transition-all border-b-2 px-1 whitespace-nowrap ${
                 activeTab === 'accounts'
@@ -160,6 +172,18 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <Send className="h-5 w-5" />
           <span className="text-[10px]">Send</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('chat')}
+          className={`flex flex-col items-center gap-1 px-2 py-1 rounded-xl transition-all ${
+            activeTab === 'chat'
+              ? 'text-indigo-600 dark:text-indigo-400 font-extrabold scale-105'
+              : 'text-slate-500 dark:text-slate-400'
+          }`}
+        >
+          <MessageSquare className="h-5 w-5" />
+          <span className="text-[10px]">Chat Box</span>
         </button>
 
         <button

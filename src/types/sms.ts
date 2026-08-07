@@ -1,3 +1,16 @@
+export interface ChatMessage {
+  id: string;
+  phone: string;
+  contactName?: string;
+  direction: 'outgoing' | 'incoming';
+  text: string;
+  status: 'PENDING' | 'SENT' | 'DELIVERED' | 'FAILED' | 'RECEIVED';
+  timestamp: string;
+  apiAccount?: string;
+  messageId?: string;
+  error?: string;
+}
+
 export interface SmsAccount {
   user: string;
   pwd: string;

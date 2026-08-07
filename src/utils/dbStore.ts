@@ -1,4 +1,4 @@
-import { SmsRecord, SavedFolder, RunSettings } from '../types/sms';
+import { SmsRecord, SavedFolder, RunSettings, ChatMessage } from '../types/sms';
 
 const STORAGE_KEYS = {
   TRACKING: 'sms_tracking_records',
@@ -400,5 +400,34 @@ export function saveSavedFolders(folders: SavedFolder[]): void {
     localStorage.setItem(STORAGE_KEYS.SAVED_FOLDERS, JSON.stringify(folders));
   } catch (err) {
     console.error('Failed to save folders:', err);
+  }
+}
+
+// Chat Messages Persistence
+export function loadChatMessages(): ChatMessage[] {
+  try {
+    const raw = localStorage.getItem('sms_chat_messages_store');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+let pendingChatSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingChatMessagesToSave: ChatMessage[] | null = null;
+
+export function saveChatMessages(messages: ChatMessage[]): void {
+  pendingChatMessagesToSave = messages;
+  if (!pendingChatSaveTimer) {
+    pendingChatSaveTimer = setTimeout(() => {
+      pendingChatSaveTimer = null;
+      if (pendingChatMessagesToSave) {
+        try {
+          localStorage.setItem('sms_chat_messages_store', JSON.stringify(pendingChatMessagesToSave));
+        } catch (err) {
+          console.error('Failed to save chat messages:', err);
+        }
+      }
+    }, 200);
   }
 }

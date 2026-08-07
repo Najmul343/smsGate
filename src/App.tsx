@@ -31,6 +31,7 @@ import { GlobalDashboard } from './components/GlobalDashboard';
 import { SendNumbersPanel } from './components/SendNumbersPanel';
 import { AccountTab } from './components/AccountTab';
 import { MasterLogTab } from './components/MasterLogTab';
+import { MessageBoxTab } from './components/MessageBoxTab';
 import { VercelInspectorTab } from './components/VercelInspectorTab';
 
 export function App() {
@@ -808,6 +809,22 @@ export function App() {
                 saveRecords(updated);
               }}
               onSendAllRemaining={handleSendAllRemainingFromAnyApi}
+            />
+          )}
+
+          {activeTab === 'chat' && (
+            <MessageBoxTab
+              records={records}
+              accounts={activeAccounts}
+              lastMessage={lastMessage}
+              messageVariants={messageVariants}
+              onRecordsUpdated={(updated) => {
+                setRecords(updated);
+                saveRecords(updated);
+              }}
+              onNavigateToSend={() => {
+                setActiveTab('send');
+              }}
             />
           )}
 
