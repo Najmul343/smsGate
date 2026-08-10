@@ -76,6 +76,21 @@ export const SendNumbersPanel: React.FC<SendNumbersPanelProps> = ({
 
   const activeAccountUsers = accounts.filter((a) => a.enabled).map((a) => a.user);
 
+  useEffect(() => {
+    if (activeAccountUsers.length > 0) {
+      setSelectedAccounts((prev) => {
+        if (prev.length === 0) return activeAccountUsers;
+        const valid = prev.filter((u) => activeAccountUsers.includes(u));
+        return valid.length > 0 ? valid : activeAccountUsers;
+      });
+      setLibSelectedAccounts((prev) => {
+        if (prev.length === 0) return activeAccountUsers;
+        const valid = prev.filter((u) => activeAccountUsers.includes(u));
+        return valid.length > 0 ? valid : activeAccountUsers;
+      });
+    }
+  }, [accounts]);
+
   // Handlers
   const handleQuickFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

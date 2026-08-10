@@ -62,6 +62,17 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
   const activeAccountUsers = accounts.filter((a) => a.enabled).map((a) => a.user);
 
   useEffect(() => {
+    const activeUsers = accounts.filter((a) => a.enabled).map((a) => a.user);
+    if (activeUsers.length > 0) {
+      setSelectedAccounts((prev) => {
+        if (prev.length === 0) return activeUsers;
+        const validPrev = prev.filter((u) => activeUsers.includes(u));
+        return validPrev.length > 0 ? validPrev : activeUsers;
+      });
+    }
+  }, [accounts]);
+
+  useEffect(() => {
     if (propVariants) {
       setMessageVariantsState(propVariants);
     }

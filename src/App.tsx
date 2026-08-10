@@ -94,7 +94,7 @@ export function App() {
     fetchCloudWorkspace(key).then((cloud) => {
       if (cloud) {
         isRemoteUpdateRef.current = true;
-        if (cloud.accountsText !== undefined) {
+        if (cloud.accountsText !== undefined && (cloud.accountsText.trim() !== '' || !getSetting('accounts_text', ''))) {
           setAccountsText(cloud.accountsText);
           setSetting('accounts_text', cloud.accountsText);
         }
@@ -134,7 +134,7 @@ export function App() {
     const unsub = subscribeCloudWorkspace(key, (cloud) => {
       if (!cloud) return;
       isRemoteUpdateRef.current = true;
-      if (cloud.accountsText !== undefined) {
+      if (cloud.accountsText !== undefined && (cloud.accountsText.trim() !== '' || !getSetting('accounts_text', ''))) {
         setAccountsText(cloud.accountsText);
         setSetting('accounts_text', cloud.accountsText);
       }
@@ -788,7 +788,7 @@ export function App() {
                 setRecords(updatedRecords);
                 saveRecords(updatedRecords);
                 if (licenseInfo?.activeKey) {
-                  saveCloudWorkspace(licenseInfo.activeKey, { records: updatedRecords });
+                  saveCloudWorkspace(licenseInfo.activeKey, { records: updatedRecords, accountsText });
                 }
                 return summary;
               }}

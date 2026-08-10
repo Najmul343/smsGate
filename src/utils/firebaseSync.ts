@@ -118,37 +118,32 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
   const docRef = doc(db, 'license_data', cleanKey);
 
   try {
-    // Safely trim records so JSON payload stays under 700KB (Firestore 1MB total doc size limit)
-    const cloudRecords = safeTrimRecordsForCloud(data.records || [], 700000);
-
-    const rawPayload: WorkspaceData = {
+    const updatePayload: Record<string, any> = {
       licenseKey: cleanKey,
-      accountsText: data.accountsText !== undefined ? data.accountsText : '',
-      accounts: data.accounts || [],
-      records: cloudRecords,
-      folders: data.folders || [],
-      settings: data.settings || {
-        dailyLimit: 180,
-        delayMin: 5,
-        delayMax: 8,
-        batchSize: 10,
-        batchPause: 120,
-        maxRetries: 3,
-        autoMode: true,
-        scheduleEnabled: false,
-        scheduleTime: '10:00',
-        scheduleDays: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-        scheduleOnlyOnline: true,
-        scheduleMessage: '',
-        scheduleCount: 50,
-        lastScheduleRun: '',
-      },
-      lastMessage: data.lastMessage !== undefined ? data.lastMessage : '',
       updatedAt: new Date().toISOString(),
     };
 
+    if (data.accountsText !== undefined) {
+      updatePayload.accountsText = data.accountsText;
+    }
+    if (data.accounts !== undefined) {
+      updatePayload.accounts = data.accounts;
+    }
+    if (data.records !== undefined) {
+      updatePayload.records = safeTrimRecordsForCloud(data.records, 700000);
+    }
+    if (data.folders !== undefined) {
+      updatePayload.folders = data.folders;
+    }
+    if (data.settings !== undefined) {
+      updatePayload.settings = data.settings;
+    }
+    if (data.lastMessage !== undefined) {
+      updatePayload.lastMessage = data.lastMessage;
+    }
+
     // Deep clean undefined fields since Firestore setDoc throws when encountering undefined values
-    const cleanPayload = JSON.parse(JSON.stringify(rawPayload));
+    const cleanPayload = JSON.parse(JSON.stringify(updatePayload));
 
     await setDoc(docRef, cleanPayload, { merge: true });
     return true;
@@ -166,17 +161,19 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
         try {
           // Emergency retry: keep latest 250 records
           const emergencyRecords = data.records.slice(-250);
-          const emergencyPayload = JSON.parse(JSON.stringify({
+          const emergencyPayload: Record<string, any> = {
             licenseKey: cleanKey,
-            accountsText: data.accountsText !== undefined ? data.accountsText : '',
-            accounts: data.accounts || [],
             records: emergencyRecords,
-            folders: data.folders || [],
-            settings: data.settings || {},
-            lastMessage: data.lastMessage !== undefined ? data.lastMessage : '',
             updatedAt: new Date().toISOString(),
-          }));
-          await setDoc(docRef, emergencyPayload, { merge: true });
+          };
+          if (data.accountsText !== undefined) emergencyPayload.accountsText = data.accountsText;
+          if (data.accounts !== undefined) emergencyPayload.accounts = data.accounts;
+          if (data.folders !== undefined) emergencyPayload.folders = data.folders;
+          if (data.settings !== undefined) emergencyPayload.settings = data.settings;
+          if (data.lastMessage !== undefined) emergencyPayload.lastMessage = data.lastMessage;
+
+          const cleanEmergency = JSON.parse(JSON.stringify(emergencyPayload));
+          await setDoc(docRef, cleanEmergency, { merge: true });
           return true;
         } catch (retryErr) {
           console.error('Error during emergency trim retry:', retryErr);
