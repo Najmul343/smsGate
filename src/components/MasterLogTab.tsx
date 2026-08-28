@@ -501,19 +501,37 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
     return list;
   }, [records, viewFilter, deviceFilter, searchTerm]);
 
-  // Pagination State
-  const [pageSize, setPageSize] = useState<number>(100);
+  // Pagination & Lazy Scroll State
+  const [paginationMode, setPaginationMode] = useState<'lazy_scroll' | 'paged'>('lazy_scroll');
+  const [visibleScrollCount, setVisibleScrollCount] = useState<number>(50);
+  const [pageSize, setPageSize] = useState<number>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
+  // Reset lazy scroll & pagination when filters/search change
   useEffect(() => {
+    setVisibleScrollCount(50);
     setCurrentPage(1);
-  }, [viewFilter, deviceFilter, searchTerm, pageSize]);
+  }, [viewFilter, deviceFilter, searchTerm, paginationMode]);
+
+  // Handle on-demand scroll streaming
+  const handleTableScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    if (paginationMode !== 'lazy_scroll') return;
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < 150) {
+      if (visibleScrollCount < displayRecords.length) {
+        setVisibleScrollCount((prev) => Math.min(prev + 50, displayRecords.length));
+      }
+    }
+  };
 
   const paginatedRecords = useMemo(() => {
+    if (paginationMode === 'lazy_scroll') {
+      return displayRecords.slice(0, visibleScrollCount);
+    }
     if (pageSize === -1) return displayRecords;
     const start = (currentPage - 1) * pageSize;
     return displayRecords.slice(start, start + pageSize);
-  }, [displayRecords, currentPage, pageSize]);
+  }, [displayRecords, paginationMode, visibleScrollCount, currentPage, pageSize]);
 
   const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(displayRecords.length / pageSize));
 
@@ -860,7 +878,10 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
 
         {/* Global Database Master Table */}
         <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm">
-          <div className="max-h-[500px] overflow-x-auto overflow-y-auto">
+          <div
+            className="max-h-[500px] overflow-x-auto overflow-y-auto"
+            onScroll={handleTableScroll}
+          >
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-100 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 font-bold uppercase text-[10px] sticky top-0 z-10 border-b border-slate-200 dark:border-slate-700">
                 <tr>
@@ -1084,28 +1105,64 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
           </div>
 
           <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-sans">
-            <div className="flex items-center gap-2">
-              <span>
-                Showing <strong>{paginatedRecords.length}</strong> of <strong>{displayRecords.length}</strong> filtered ({records.length} total)
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold text-slate-700 dark:text-slate-200">
+                Showing {paginatedRecords.length} of {displayRecords.length} filtered ({records.length} total)
               </span>
               <span className="text-slate-300 dark:text-slate-700">|</span>
-              <div className="flex items-center gap-1">
-                <span className="text-[11px] text-slate-400">Rows:</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs text-slate-800 dark:text-slate-200"
+              
+              {/* Mode Toggle */}
+              <div className="flex items-center gap-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 text-[11px] font-bold">
+                <button
+                  onClick={() => setPaginationMode('lazy_scroll')}
+                  className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                    paginationMode === 'lazy_scroll'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                  }`}
                 >
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={250}>250</option>
-                  <option value={500}>500</option>
-                  <option value={-1}>All ({displayRecords.length})</option>
-                </select>
+                  ⚡ Scroll Load (On-Demand)
+                </button>
+                <button
+                  onClick={() => setPaginationMode('paged')}
+                  className={`px-2 py-0.5 rounded transition-all cursor-pointer ${
+                    paginationMode === 'paged'
+                      ? 'bg-emerald-600 text-white'
+                      : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  📑 Page Mode
+                </button>
               </div>
+
+              {paginationMode === 'paged' && (
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-slate-400">Rows:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="px-2 py-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-xs text-slate-800 dark:text-slate-200"
+                  >
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={250}>250</option>
+                    <option value={500}>500</option>
+                    <option value={-1}>All ({displayRecords.length})</option>
+                  </select>
+                </div>
+              )}
             </div>
 
-            {pageSize !== -1 && totalPages > 1 && (
+            {paginationMode === 'lazy_scroll' && visibleScrollCount < displayRecords.length && (
+              <button
+                onClick={() => setVisibleScrollCount((prev) => Math.min(prev + 50, displayRecords.length))}
+                className="px-3 py-1 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+              >
+                <span>⬇ Load Next 50 ({displayRecords.length - visibleScrollCount} remaining)</span>
+              </button>
+            )}
+
+            {paginationMode === 'paged' && pageSize !== -1 && totalPages > 1 && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -1128,7 +1185,7 @@ export const MasterLogTab: React.FC<MasterLogTabProps> = ({
             )}
 
             <span className="text-[11px] text-slate-400 hidden lg:inline">
-              💡 Tip: Hover or edit any row name to update contact details.
+              💡 Tip: Records stream smoothly on scroll to conserve memory and keep UI fast.
             </span>
           </div>
         </div>

@@ -1,5 +1,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, Unsubscribe } from 'firebase/firestore';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+  Unsubscribe,
+  disableNetwork,
+  enableNetwork,
+} from 'firebase/firestore';
 import { SmsRecord, SavedFolder, RunSettings, SmsAccount } from '../types/sms';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -10,6 +19,47 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = firebaseConfig.firestoreDatabaseId
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
+
+const QUOTA_STORAGE_KEY = 'firestore_quota_exceeded_timestamp';
+
+export function isFirestoreQuotaExceeded(): boolean {
+  try {
+    const stored = localStorage.getItem(QUOTA_STORAGE_KEY) || sessionStorage.getItem(QUOTA_STORAGE_KEY);
+    if (stored) {
+      const resetTime = parseInt(stored, 10);
+      if (Date.now() < resetTime) {
+        return true;
+      } else {
+        localStorage.removeItem(QUOTA_STORAGE_KEY);
+        sessionStorage.removeItem(QUOTA_STORAGE_KEY);
+      }
+    }
+  } catch {}
+  return false;
+}
+
+export function markFirestoreQuotaExceeded(): void {
+  try {
+    const resetTime = Date.now() + 12 * 60 * 60 * 1000; // 12 hours backoff
+    localStorage.setItem(QUOTA_STORAGE_KEY, resetTime.toString());
+    sessionStorage.setItem(QUOTA_STORAGE_KEY, resetTime.toString());
+    // Immediately disable Firestore network to stop internal retry loops and console errors
+    disableNetwork(db).catch(() => {});
+  } catch {}
+}
+
+export function tryRestoreFirestoreNetwork(): void {
+  try {
+    localStorage.removeItem(QUOTA_STORAGE_KEY);
+    sessionStorage.removeItem(QUOTA_STORAGE_KEY);
+    enableNetwork(db).catch(() => {});
+  } catch {}
+}
+
+// Check initial status on module load
+if (typeof window !== 'undefined' && isFirestoreQuotaExceeded()) {
+  disableNetwork(db).catch(() => {});
+}
 
 export interface WorkspaceData {
   licenseKey: string;
@@ -49,7 +99,7 @@ export function setActiveLicenseKey(key: string): void {
  */
 export async function fetchCloudWorkspace(licenseKey: string): Promise<WorkspaceData | null> {
   const cleanKey = licenseKey.trim().toUpperCase();
-  if (!cleanKey) return null;
+  if (!cleanKey || isFirestoreQuotaExceeded()) return null;
 
   try {
     const docRef = doc(db, 'license_data', cleanKey);
@@ -58,14 +108,20 @@ export async function fetchCloudWorkspace(licenseKey: string): Promise<Workspace
       return snap.data() as WorkspaceData;
     }
     return null;
-  } catch (err) {
-    console.error('Error fetching workspace from cloud:', err);
+  } catch (err: any) {
+    const errMsg = String(err?.message || err?.code || err || '');
+    if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
+      console.warn('⚡ Firestore daily free quota reached on fetch. Operating safely in local storage mode.');
+      markFirestoreQuotaExceeded();
+    } else {
+      console.error('Error fetching workspace from cloud:', err);
+    }
     return null;
   }
 }
 
-let isQuotaExceeded = false;
-let quotaExceededResetTime = 0;
+let lastSaveTime = 0;
+const MIN_SAVE_INTERVAL_MS = 25000; // Throttle cloud writes to conserve daily free quota units
 
 /**
  * Safely trims SMS records to ensure the overall Firestore document payload stays comfortably under the 1MB limit (~700 KB max for records).
@@ -102,18 +158,21 @@ function safeTrimRecordsForCloud(records: SmsRecord[], targetMaxBytes: number = 
 /**
  * Save workspace data to cloud Firestore for a given license key.
  */
-export async function saveCloudWorkspace(licenseKey: string, data: Partial<WorkspaceData>): Promise<boolean> {
+export async function saveCloudWorkspace(licenseKey: string, data: Partial<WorkspaceData>, force: boolean = false): Promise<boolean> {
   const cleanKey = licenseKey.trim().toUpperCase();
   if (!cleanKey) return false;
 
-  // If quota was previously exceeded, check if backoff period has passed
-  if (isQuotaExceeded) {
-    if (Date.now() < quotaExceededResetTime) {
-      return false;
-    } else {
-      isQuotaExceeded = false;
-    }
+  // If quota was previously exceeded, suppress background write attempts
+  if (isFirestoreQuotaExceeded()) {
+    return false;
   }
+
+  // Throttle writes if not forced
+  const now = Date.now();
+  if (!force && now - lastSaveTime < MIN_SAVE_INTERVAL_MS) {
+    return false;
+  }
+  lastSaveTime = now;
 
   const docRef = doc(db, 'license_data', cleanKey);
 
@@ -181,8 +240,7 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
       }
     } else if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || err?.code === 'resource-exhausted') {
       console.warn('⚡ Firestore daily free quota reached. Operating safely in local storage mode.');
-      isQuotaExceeded = true;
-      quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000;
+      markFirestoreQuotaExceeded();
     } else {
       console.error('Error saving workspace to cloud:', err);
     }
@@ -198,7 +256,7 @@ export function subscribeCloudWorkspace(
   onDataChange: (data: WorkspaceData) => void
 ): Unsubscribe | null {
   const cleanKey = licenseKey.trim().toUpperCase();
-  if (!cleanKey || isQuotaExceeded) return null;
+  if (!cleanKey || isFirestoreQuotaExceeded()) return null;
 
   try {
     const docRef = doc(db, 'license_data', cleanKey);
@@ -215,8 +273,7 @@ export function subscribeCloudWorkspace(
         const errMsg = String(error?.message || error?.code || error || '');
         if (errMsg.includes('resource-exhausted') || errMsg.includes('Quota limit exceeded') || error?.code === 'resource-exhausted') {
           console.warn('⚡ Firestore subscription paused due to daily free quota limits. System running in high-speed local mode.');
-          isQuotaExceeded = true;
-          quotaExceededResetTime = Date.now() + 24 * 60 * 60 * 1000;
+          markFirestoreQuotaExceeded();
           if (unsubRef) {
             try { unsubRef(); } catch {}
           }

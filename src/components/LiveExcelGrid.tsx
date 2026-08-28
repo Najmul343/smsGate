@@ -426,6 +426,107 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
         </div>
       )}
 
+      {/* SMS Content & Account Dispatch Section */}
+      <div className="p-4 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-4">
+        <MessageVariantsEditor
+          variants={messageVariantsState}
+          onChangeVariants={handleUpdateVariants}
+        />
+
+        <div className="space-y-1.5">
+          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+            Target Active API Devices ({selectedAccounts.length} selected)
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {activeAccountUsers.map((user) => {
+              const isSelected = selectedAccounts.includes(user);
+              return (
+                <button
+                  key={user}
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedAccounts(selectedAccounts.filter((u) => u !== user));
+                    } else {
+                      setSelectedAccounts([...selectedAccounts, user]);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-lg font-mono text-xs font-medium border transition-all ${
+                    isSelected
+                      ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white shadow-sm'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                  }`}
+                >
+                  {user} {isSelected ? '✓' : ''}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Force Retarget Option Toggle */}
+        <div className="flex items-center justify-between p-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 rounded-xl">
+          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-300">
+            <input
+              type="checkbox"
+              checked={forceRetargetMode}
+              onChange={(e) => setForceRetargetMode(e.target.checked)}
+              className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 accent-amber-600 cursor-pointer"
+            />
+            <span>🎯 Force Retarget Mode (Reset & re-send numbers even if they were already sent or delivered before)</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <button
+            onClick={() => handleQueueToMaster()}
+            disabled={!validRows.length}
+            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Add numbers to 'Yet to Send' queue"
+          >
+            <Plus className="w-4 h-4" />
+            <span>📥 Add to 'Yet to Send' Queue</span>
+          </button>
+
+          <button
+            onClick={() => handleSendLiveGrid()}
+            disabled={!validRows.length || !selectedAccounts.length}
+            className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Split numbers across selected active devices and start sending"
+          >
+            <Send className="w-4 h-4" />
+            <span>🚀 Split & Start Grid</span>
+          </button>
+
+          <button
+            onClick={handleForceRetargetAndSend}
+            disabled={!validRows.length || !selectedAccounts.length}
+            className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
+            title="Re-add these numbers and send immediately, even if they were already sent before"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>🔄 Force Retarget & Send</span>
+          </button>
+
+          {onSendAllRemaining && (
+            <button
+              onClick={onSendAllRemaining}
+              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 animate-pulse"
+              title="Remove account filters and send all remaining database numbers from any available API!"
+            >
+              <Send className="w-4 h-4" />
+              <span>🌐 Send All Remaining (Any API)</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {actionSummary && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-semibold rounded-xl border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>{actionSummary}</span>
+        </div>
+      )}
+
       {/* Live Excel Spreadsheet Interactive Grid */}
       <div className="border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden bg-white dark:bg-slate-900 shadow-sm">
         <div className="max-h-80 overflow-y-auto">
@@ -620,107 +721,6 @@ export const LiveExcelGrid: React.FC<LiveExcelGridProps> = ({
           </div>
         </div>
       </div>
-
-      {/* SMS Content & Account Dispatch Section */}
-      <div className="p-4 bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-4">
-        <MessageVariantsEditor
-          variants={messageVariantsState}
-          onChangeVariants={handleUpdateVariants}
-        />
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-            Target Active API Devices ({selectedAccounts.length} selected)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {activeAccountUsers.map((user) => {
-              const isSelected = selectedAccounts.includes(user);
-              return (
-                <button
-                  key={user}
-                  onClick={() => {
-                    if (isSelected) {
-                      setSelectedAccounts(selectedAccounts.filter((u) => u !== user));
-                    } else {
-                      setSelectedAccounts([...selectedAccounts, user]);
-                    }
-                  }}
-                  className={`px-3 py-1.5 rounded-lg font-mono text-xs font-medium border transition-all ${
-                    isSelected
-                      ? 'bg-slate-900 text-white border-slate-900 dark:bg-white dark:text-slate-900 dark:border-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border-slate-200 dark:border-slate-700'
-                  }`}
-                >
-                  {user} {isSelected ? '✓' : ''}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Force Retarget Option Toggle */}
-        <div className="flex items-center justify-between p-3 bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 rounded-xl">
-          <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-amber-900 dark:text-amber-300">
-            <input
-              type="checkbox"
-              checked={forceRetargetMode}
-              onChange={(e) => setForceRetargetMode(e.target.checked)}
-              className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 accent-amber-600 cursor-pointer"
-            />
-            <span>🎯 Force Retarget Mode (Reset & re-send numbers even if they were already sent or delivered before)</span>
-          </label>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <button
-            onClick={() => handleQueueToMaster()}
-            disabled={!validRows.length}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
-            title="Add numbers to 'Yet to Send' queue"
-          >
-            <Plus className="w-4 h-4" />
-            <span>📥 Add to 'Yet to Send' Queue</span>
-          </button>
-
-          <button
-            onClick={() => handleSendLiveGrid()}
-            disabled={!validRows.length || !selectedAccounts.length}
-            className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
-            title="Split numbers across selected active devices and start sending"
-          >
-            <Send className="w-4 h-4" />
-            <span>🚀 Split & Start Grid</span>
-          </button>
-
-          <button
-            onClick={handleForceRetargetAndSend}
-            disabled={!validRows.length || !selectedAccounts.length}
-            className="w-full py-3.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
-            title="Re-add these numbers and send immediately, even if they were already sent before"
-          >
-            <RefreshCw className="w-4 h-4" />
-            <span>🔄 Force Retarget & Send</span>
-          </button>
-
-          {onSendAllRemaining && (
-            <button
-              onClick={onSendAllRemaining}
-              className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl text-xs sm:text-sm transition-all shadow-md flex items-center justify-center gap-1.5 animate-pulse"
-              title="Remove account filters and send all remaining database numbers from any available API!"
-            >
-              <Send className="w-4 h-4" />
-              <span>🌐 Send All Remaining (Any API)</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      {actionSummary && (
-        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-semibold rounded-xl border border-emerald-200 dark:border-emerald-800 flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{actionSummary}</span>
-        </div>
-      )}
     </div>
   );
 };

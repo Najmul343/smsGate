@@ -219,9 +219,9 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
   const [viewMode, setViewMode] = useState<'threads' | 'log'>('threads');
 
   // Pagination / Lazy load state for high performance
-  const [visibleThreadCount, setVisibleThreadCount] = useState<number>(30);
-  const [visibleLogCount, setVisibleLogCount] = useState<number>(30);
-  const [visibleActiveMsgCount, setVisibleActiveMsgCount] = useState<number>(50);
+  const [visibleThreadCount, setVisibleThreadCount] = useState<number>(25);
+  const [visibleLogCount, setVisibleLogCount] = useState<number>(25);
+  const [visibleActiveMsgCount, setVisibleActiveMsgCount] = useState<number>(25);
 
   const [isSending, setIsSending] = useState<boolean>(false);
   const [sendFeedback, setSendFeedback] = useState<string | null>(null);
@@ -414,12 +414,12 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
 
   // Reset pagination when search query or filters change
   useEffect(() => {
-    setVisibleThreadCount(30);
-    setVisibleLogCount(30);
+    setVisibleThreadCount(25);
+    setVisibleLogCount(25);
   }, [searchQuery, filterType, selectedApiFilter, viewMode]);
 
   useEffect(() => {
-    setVisibleActiveMsgCount(50);
+    setVisibleActiveMsgCount(25);
   }, [selectedPhone]);
 
   // Sliced lists for fast rendering
@@ -443,8 +443,16 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (scrollHeight - scrollTop - clientHeight < 150) {
       if (visibleThreadCount < filteredThreads.length) {
-        setVisibleThreadCount((prev) => Math.min(prev + 30, filteredThreads.length));
+        setVisibleThreadCount((prev) => Math.min(prev + 25, filteredThreads.length));
       }
+    }
+  };
+
+  // Infinite scroll load trigger for active chat conversation (scroll up to load older messages)
+  const handleActiveChatScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop } = e.currentTarget;
+    if (scrollTop < 80 && activeThread && activeThread.messages.length > visibleActiveMsgCount) {
+      setVisibleActiveMsgCount((prev) => Math.min(prev + 25, activeThread.messages.length));
     }
   };
 
@@ -453,7 +461,7 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
     if (scrollHeight - scrollTop - clientHeight < 200) {
       if (visibleLogCount < allFilteredMessages.length) {
-        setVisibleLogCount((prev) => Math.min(prev + 30, allFilteredMessages.length));
+        setVisibleLogCount((prev) => Math.min(prev + 25, allFilteredMessages.length));
       }
     }
   };
@@ -1029,7 +1037,7 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
                   {displayedThreads.length < filteredThreads.length && (
                     <div className="p-3 text-center border-t border-slate-100 dark:border-slate-800">
                       <button
-                        onClick={() => setVisibleThreadCount((prev) => Math.min(prev + 30, filteredThreads.length))}
+                        onClick={() => setVisibleThreadCount((prev) => Math.min(prev + 25, filteredThreads.length))}
                         className="w-full py-2 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-xs rounded-xl border border-indigo-200 dark:border-indigo-800 transition-all cursor-pointer"
                       >
                         Load More Contacts ({filteredThreads.length - displayedThreads.length} remaining)
@@ -1110,11 +1118,14 @@ export const MessageBoxTab: React.FC<MessageBoxTabProps> = ({
                 </div>
 
                 {/* Message List */}
-                <div className="flex-1 p-4 sm:p-5 overflow-y-auto space-y-3 bg-slate-50/30 dark:bg-slate-950/30">
+                <div
+                  className="flex-1 p-4 sm:p-5 overflow-y-auto space-y-3 bg-slate-50/30 dark:bg-slate-950/30"
+                  onScroll={handleActiveChatScroll}
+                >
                   {activeThread.messages.length > displayedActiveMessages.length && (
                     <div className="text-center py-2 pb-3">
                       <button
-                        onClick={() => setVisibleActiveMsgCount((prev) => prev + 50)}
+                        onClick={() => setVisibleActiveMsgCount((prev) => Math.min(prev + 25, activeThread.messages.length))}
                         className="px-3.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-sm"
                       >
                         ⬆ Load older messages ({activeThread.messages.length - displayedActiveMessages.length} remaining)

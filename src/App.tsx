@@ -23,6 +23,7 @@ import {
   saveCloudWorkspace,
   subscribeCloudWorkspace,
   setActiveLicenseKey,
+  isFirestoreQuotaExceeded,
 } from './utils/firebaseSync';
 import { LicenseModal } from './components/LicenseModal';
 import { Sidebar } from './components/Sidebar';
@@ -33,6 +34,7 @@ import { AccountTab } from './components/AccountTab';
 import { MasterLogTab } from './components/MasterLogTab';
 import { MessageBoxTab } from './components/MessageBoxTab';
 import { VercelInspectorTab } from './components/VercelInspectorTab';
+import { Agentation } from 'agentation';
 
 export function App() {
   // License state
@@ -81,20 +83,51 @@ export function App() {
   });
 
   // Remote update flag to prevent echo loops
-  const isRemoteUpdateRef = useRef(false);
+  // Cloud Workspace Sync State
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
 
-  // License Key & Firebase Cloud Sync Engine
-  useEffect(() => {
-    if (!licenseInfo.isValid || !licenseInfo.activeKey) return;
+  // Manual Backup Workspace to Cloud (On-Demand)
+  const handleBackupToCloud = async () => {
+    if (!licenseInfo.isValid || !licenseInfo.activeKey) {
+      setCloudSyncStatus('⚠️ Please activate a valid license key first.');
+      return;
+    }
+    setIsCloudSyncing(true);
+    setCloudSyncStatus('Uploading workspace to cloud...');
+    try {
+      const ok = await saveCloudWorkspace(licenseInfo.activeKey, {
+        accountsText,
+        records,
+        folders: loadSavedFolders(),
+        settings,
+        lastMessage,
+      }, true);
+      if (ok) {
+        setCloudSyncStatus('✅ Workspace successfully backed up to cloud!');
+      } else {
+        setCloudSyncStatus('⚡ Cloud write limit reached. Local data is safe.');
+      }
+    } catch {
+      setCloudSyncStatus('❌ Error backing up to cloud.');
+    } finally {
+      setIsCloudSyncing(false);
+      setTimeout(() => setCloudSyncStatus(null), 5000);
+    }
+  };
 
-    const key = licenseInfo.activeKey.trim().toUpperCase();
-    setActiveLicenseKey(key);
-
-    // Fetch initial workspace state from Cloud Firestore
-    fetchCloudWorkspace(key).then((cloud) => {
+  // Manual Restore Workspace from Cloud (On-Demand)
+  const handleRestoreFromCloud = async () => {
+    if (!licenseInfo.isValid || !licenseInfo.activeKey) {
+      setCloudSyncStatus('⚠️ Please activate a valid license key first.');
+      return;
+    }
+    setIsCloudSyncing(true);
+    setCloudSyncStatus('Fetching workspace from cloud...');
+    try {
+      const cloud = await fetchCloudWorkspace(licenseInfo.activeKey);
       if (cloud) {
-        isRemoteUpdateRef.current = true;
-        if (cloud.accountsText !== undefined && (cloud.accountsText.trim() !== '' || !getSetting('accounts_text', ''))) {
+        if (cloud.accountsText !== undefined && cloud.accountsText.trim() !== '') {
           setAccountsText(cloud.accountsText);
           setSetting('accounts_text', cloud.accountsText);
         }
@@ -118,73 +151,17 @@ export function App() {
           setLastMessage(cloud.lastMessage);
           setSetting('last_message', cloud.lastMessage);
         }
+        setCloudSyncStatus(`✅ Loaded ${cloud.records?.length || 0} records & workspace from cloud!`);
       } else {
-        // Upload initial local state to Firestore cloud
-        saveCloudWorkspace(key, {
-          accountsText,
-          records,
-          folders: loadSavedFolders(),
-          settings,
-          lastMessage,
-        });
+        setCloudSyncStatus('ℹ️ No existing cloud backup found for this key.');
       }
-    });
-
-    // Subscribe to live Firestore snapshot updates across devices
-    const unsub = subscribeCloudWorkspace(key, (cloud) => {
-      if (!cloud) return;
-      isRemoteUpdateRef.current = true;
-      if (cloud.accountsText !== undefined && (cloud.accountsText.trim() !== '' || !getSetting('accounts_text', ''))) {
-        setAccountsText(cloud.accountsText);
-        setSetting('accounts_text', cloud.accountsText);
-      }
-      if (cloud.records && Array.isArray(cloud.records)) {
-        setRecords((prev) => {
-          const map = new Map<string, SmsRecord>();
-          prev.forEach((r) => map.set(r.message_id || r.phone, r));
-          cloud.records?.forEach((r) => map.set(r.message_id || r.phone, r));
-          const merged = Array.from(map.values());
-          saveRecords(merged);
-          return merged;
-        });
-      }
-      if (cloud.folders && Array.isArray(cloud.folders)) {
-        saveSavedFolders(cloud.folders);
-      }
-      if (cloud.settings) {
-        setSettings((prev) => ({ ...prev, ...cloud.settings }));
-      }
-      if (cloud.lastMessage) {
-        setLastMessage(cloud.lastMessage);
-        setSetting('last_message', cloud.lastMessage);
-      }
-    });
-
-    return () => {
-      if (unsub) unsub();
-    };
-  }, [licenseInfo.activeKey, licenseInfo.isValid]);
-
-  // Auto-sync local state changes to Cloud Firestore
-  useEffect(() => {
-    if (!licenseInfo.isValid || !licenseInfo.activeKey) return;
-    if (isRemoteUpdateRef.current) {
-      isRemoteUpdateRef.current = false;
-      return;
+    } catch {
+      setCloudSyncStatus('❌ Failed to fetch cloud workspace.');
+    } finally {
+      setIsCloudSyncing(false);
+      setTimeout(() => setCloudSyncStatus(null), 5000);
     }
-
-    const timer = setTimeout(() => {
-      saveCloudWorkspace(licenseInfo.activeKey, {
-        accountsText,
-        records,
-        folders: loadSavedFolders(),
-        settings,
-        lastMessage,
-      });
-    }, 10000);
-
-    return () => clearTimeout(timer);
-  }, [records, accountsText, settings, lastMessage, licenseInfo]);
+  };
 
   // Parsed Accounts
   const [disabledAccounts, setDisabledAccounts] = useState<Record<string, boolean>>({});
@@ -652,14 +629,17 @@ export function App() {
   // License verification screen or switch modal
   if (licenseInfo.isValid !== true || showLicenseModal) {
     return (
-      <LicenseModal
-        isValid={showLicenseModal ? null : licenseInfo.isValid}
-        activeKey={licenseInfo.activeKey}
-        onActivated={() => {
-          setShowLicenseModal(false);
-          setLicenseInfo(checkLicense());
-        }}
-      />
+      <>
+        <LicenseModal
+          isValid={showLicenseModal ? null : licenseInfo.isValid}
+          activeKey={licenseInfo.activeKey}
+          onActivated={() => {
+            setShowLicenseModal(false);
+            setLicenseInfo(checkLicense());
+          }}
+        />
+        {import.meta.env.DEV && <Agentation />}
+      </>
     );
   }
 
@@ -673,7 +653,42 @@ export function App() {
         pendingCount={records.filter((r) => r.status === 'PENDING').length}
         totalCount={records.length}
         onSendAllRemaining={handleSendAllRemainingFromAnyApi}
+        onBackupToCloud={handleBackupToCloud}
+        onRestoreFromCloud={handleRestoreFromCloud}
+        isCloudSyncing={isCloudSyncing}
+        cloudSyncStatus={cloudSyncStatus}
       />
+
+      {cloudSyncStatus && (
+        <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-bold text-center shadow-md animate-fade-in flex items-center justify-center gap-2">
+          <span>{cloudSyncStatus}</span>
+          <button
+            onClick={() => setCloudSyncStatus(null)}
+            className="text-white/80 hover:text-white ml-2 text-sm font-bold"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {isFirestoreQuotaExceeded() && (
+        <div className="bg-amber-50 dark:bg-amber-950/50 border-b border-amber-200 dark:border-amber-900/50 px-4 py-2.5 text-xs text-amber-900 dark:text-amber-200">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className="font-bold">⚡ Cloud Sync Free Quota Notice:</span>
+              <span>Daily free tier write limit reached for Firestore. All SMS sending, queueing, and logs continue working locally at full speed with lazy loading.</span>
+            </div>
+            <a
+              href="https://console.firebase.google.com/project/powerful-treat-6jp90/firestore/databases/ai-studio-vercelconfigured-d1d6d2d4-26f9-4b55-b136-4186325a0c0d/data?openUpgradeDialog=true"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 font-bold underline text-amber-800 dark:text-amber-300 hover:text-amber-900 whitespace-nowrap"
+            >
+              <span>Enable Blaze / Check Firebase Limits ↗</span>
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Main Container Layout */}
       <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 flex flex-col lg:flex-row gap-6">
@@ -983,6 +998,7 @@ export function App() {
           {activeTab === 'vercel' && <VercelInspectorTab />}
         </main>
       </div>
+      {import.meta.env.DEV && <Agentation />}
     </div>
   );
 }
