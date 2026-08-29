@@ -13,6 +13,8 @@ import {
   getLocalDateString,
   loadSavedFolders,
   saveSavedFolders,
+  loadChatMessages,
+  saveChatMessages,
   unfilterAndPrepareAllRemaining,
   getMessageVariants,
   setMessageVariants,
@@ -21,6 +23,7 @@ import {
 import {
   fetchCloudWorkspace,
   saveCloudWorkspace,
+  queueCloudWorkspaceSave,
   subscribeCloudWorkspace,
   setActiveLicenseKey,
   isFirestoreQuotaExceeded,
@@ -82,10 +85,166 @@ export function App() {
     lastScheduleRun: getSetting('last_sched_run', ''),
   });
 
-  // Remote update flag to prevent echo loops
-  // Cloud Workspace Sync State
+  // Cross-Device Cloud Sync State & Synchronization Guards
+  const isInitialSyncCompletedRef = useRef<boolean>(false);
+  const isApplyingRemoteUpdateRef = useRef<boolean>(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<string | null>(null);
   const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+
+  // Automatic Cloud Workspace Fetch & Live Sync on License Activation / Boot
+  useEffect(() => {
+    if (!licenseInfo.isValid || !licenseInfo.activeKey) {
+      isInitialSyncCompletedRef.current = false;
+      return;
+    }
+
+    const currentKey = licenseInfo.activeKey.trim().toUpperCase();
+    setActiveLicenseKey(currentKey);
+    isInitialSyncCompletedRef.current = false;
+
+    let isMounted = true;
+
+    const initializeCloudWorkspace = async () => {
+      setIsCloudSyncing(true);
+      setCloudSyncStatus(`🔄 Syncing cloud data for key '${currentKey}'...`);
+
+      try {
+        const cloud = await fetchCloudWorkspace(currentKey);
+        if (!isMounted) return;
+
+        if (cloud) {
+          isApplyingRemoteUpdateRef.current = true;
+
+          if (cloud.accountsText !== undefined && cloud.accountsText.trim() !== '') {
+            setAccountsText(cloud.accountsText);
+            setSetting('accounts_text', cloud.accountsText);
+          }
+          if (cloud.records && Array.isArray(cloud.records)) {
+            setRecords(cloud.records);
+            saveRecords(cloud.records, true);
+          }
+          if (cloud.folders && Array.isArray(cloud.folders)) {
+            saveSavedFolders(cloud.folders);
+          }
+          if (cloud.settings) {
+            setSettings((prev) => ({ ...prev, ...cloud.settings }));
+          }
+          if (cloud.lastMessage !== undefined) {
+            setLastMessage(cloud.lastMessage);
+            setSetting('last_message', cloud.lastMessage);
+          }
+          if (cloud.messageVariants && Array.isArray(cloud.messageVariants)) {
+            setMessageVariantsState(cloud.messageVariants);
+            setMessageVariants(cloud.messageVariants);
+          }
+          if (cloud.chatMessages && Array.isArray(cloud.chatMessages)) {
+            saveChatMessages(cloud.chatMessages);
+          }
+
+          setCloudSyncStatus(`✅ Loaded ${cloud.records?.length || 0} records & workspace from cloud!`);
+          setTimeout(() => {
+            isApplyingRemoteUpdateRef.current = false;
+          }, 300);
+        } else {
+          // No cloud document exists yet -> seed initial workspace so next device loads it
+          const initialPayload = {
+            accountsText,
+            records,
+            folders: loadSavedFolders(),
+            settings,
+            lastMessage,
+            messageVariants,
+            chatMessages: loadChatMessages(),
+          };
+          await saveCloudWorkspace(currentKey, initialPayload, true);
+          setCloudSyncStatus(`✅ Cloud workspace connected & synced for '${currentKey}'.`);
+        }
+      } catch (err) {
+        console.error('Error during initial cloud load:', err);
+        setCloudSyncStatus('⚠️ Working in local storage mode.');
+      } finally {
+        if (isMounted) {
+          isInitialSyncCompletedRef.current = true;
+          setIsCloudSyncing(false);
+          setTimeout(() => setCloudSyncStatus(null), 4000);
+        }
+      }
+    };
+
+    initializeCloudWorkspace();
+
+    // Subscribe to real-time multi-device Firestore changes
+    const unsubscribe = subscribeCloudWorkspace(currentKey, (cloud) => {
+      if (!isMounted || !isInitialSyncCompletedRef.current || isApplyingRemoteUpdateRef.current) {
+        return;
+      }
+
+      if (cloud) {
+        isApplyingRemoteUpdateRef.current = true;
+
+        if (cloud.accountsText !== undefined && cloud.accountsText.trim() !== '') {
+          setAccountsText(cloud.accountsText);
+          setSetting('accounts_text', cloud.accountsText);
+        }
+        if (cloud.records && Array.isArray(cloud.records)) {
+          setRecords(cloud.records);
+          saveRecords(cloud.records, true);
+        }
+        if (cloud.folders && Array.isArray(cloud.folders)) {
+          saveSavedFolders(cloud.folders);
+        }
+        if (cloud.settings) {
+          setSettings((prev) => ({ ...prev, ...cloud.settings }));
+        }
+        if (cloud.lastMessage !== undefined) {
+          setLastMessage(cloud.lastMessage);
+          setSetting('last_message', cloud.lastMessage);
+        }
+        if (cloud.messageVariants && Array.isArray(cloud.messageVariants)) {
+          setMessageVariantsState(cloud.messageVariants);
+          setMessageVariants(cloud.messageVariants);
+        }
+        if (cloud.chatMessages && Array.isArray(cloud.chatMessages)) {
+          saveChatMessages(cloud.chatMessages);
+        }
+
+        setTimeout(() => {
+          isApplyingRemoteUpdateRef.current = false;
+        }, 300);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [licenseInfo.activeKey, licenseInfo.isValid]);
+
+  // Automated debounced background sync of local state changes to Cloud Firestore
+  useEffect(() => {
+    if (
+      !isInitialSyncCompletedRef.current ||
+      isApplyingRemoteUpdateRef.current ||
+      !licenseInfo.isValid ||
+      !licenseInfo.activeKey
+    ) {
+      return;
+    }
+
+    queueCloudWorkspaceSave(
+      licenseInfo.activeKey,
+      {
+        accountsText,
+        records,
+        folders: loadSavedFolders(),
+        settings,
+        lastMessage,
+        messageVariants,
+        chatMessages: loadChatMessages(),
+      },
+      2500
+    );
+  }, [records, accountsText, settings, lastMessage, messageVariants, licenseInfo.activeKey, licenseInfo.isValid]);
 
   // Manual Backup Workspace to Cloud (On-Demand)
   const handleBackupToCloud = async () => {
@@ -96,13 +255,19 @@ export function App() {
     setIsCloudSyncing(true);
     setCloudSyncStatus('Uploading workspace to cloud...');
     try {
-      const ok = await saveCloudWorkspace(licenseInfo.activeKey, {
-        accountsText,
-        records,
-        folders: loadSavedFolders(),
-        settings,
-        lastMessage,
-      }, true);
+      const ok = await saveCloudWorkspace(
+        licenseInfo.activeKey,
+        {
+          accountsText,
+          records,
+          folders: loadSavedFolders(),
+          settings,
+          lastMessage,
+          messageVariants,
+          chatMessages: loadChatMessages(),
+        },
+        true
+      );
       if (ok) {
         setCloudSyncStatus('✅ Workspace successfully backed up to cloud!');
       } else {
@@ -127,19 +292,14 @@ export function App() {
     try {
       const cloud = await fetchCloudWorkspace(licenseInfo.activeKey);
       if (cloud) {
+        isApplyingRemoteUpdateRef.current = true;
         if (cloud.accountsText !== undefined && cloud.accountsText.trim() !== '') {
           setAccountsText(cloud.accountsText);
           setSetting('accounts_text', cloud.accountsText);
         }
         if (cloud.records && Array.isArray(cloud.records)) {
-          setRecords((prev) => {
-            const map = new Map<string, SmsRecord>();
-            prev.forEach((r) => map.set(r.message_id || r.phone, r));
-            cloud.records?.forEach((r) => map.set(r.message_id || r.phone, r));
-            const merged = Array.from(map.values());
-            saveRecords(merged);
-            return merged;
-          });
+          setRecords(cloud.records);
+          saveRecords(cloud.records, true);
         }
         if (cloud.folders && Array.isArray(cloud.folders)) {
           saveSavedFolders(cloud.folders);
@@ -151,7 +311,17 @@ export function App() {
           setLastMessage(cloud.lastMessage);
           setSetting('last_message', cloud.lastMessage);
         }
+        if (cloud.messageVariants && Array.isArray(cloud.messageVariants)) {
+          setMessageVariantsState(cloud.messageVariants);
+          setMessageVariants(cloud.messageVariants);
+        }
+        if (cloud.chatMessages && Array.isArray(cloud.chatMessages)) {
+          saveChatMessages(cloud.chatMessages);
+        }
         setCloudSyncStatus(`✅ Loaded ${cloud.records?.length || 0} records & workspace from cloud!`);
+        setTimeout(() => {
+          isApplyingRemoteUpdateRef.current = false;
+        }, 300);
       } else {
         setCloudSyncStatus('ℹ️ No existing cloud backup found for this key.');
       }
@@ -652,6 +822,8 @@ export function App() {
         activeAccountsCount={activeAccounts.length}
         pendingCount={records.filter((r) => r.status === 'PENDING').length}
         totalCount={records.length}
+        licenseKey={licenseInfo.activeKey}
+        onOpenLicenseModal={() => setShowLicenseModal(true)}
         onSendAllRemaining={handleSendAllRemainingFromAnyApi}
         onBackupToCloud={handleBackupToCloud}
         onRestoreFromCloud={handleRestoreFromCloud}

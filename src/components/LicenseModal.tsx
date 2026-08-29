@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { HARDCODED_KEYS, saveLicense, extendActiveLicense } from '../utils/license';
+import { setActiveLicenseKey } from '../utils/firebaseSync';
 import { ShieldAlert, Lock, Key, CheckCircle, Zap } from 'lucide-react';
 
 interface LicenseModalProps {
@@ -25,20 +26,24 @@ export const LicenseModal: React.FC<LicenseModalProps> = ({ isValid, activeKey, 
 
     const days = HARDCODED_KEYS[trimmed] || 365;
     saveLicense(trimmed, days);
+    setActiveLicenseKey(trimmed);
     setSuccessMsg(`License Activated: Key '${trimmed}' unlocked for ${days} days!`);
     setTimeout(() => {
       onActivated();
-    }, 600);
+    }, 400);
   };
 
   const handleExtendCurrent = () => {
     setErrorMsg('');
     setSuccessMsg('');
     extendActiveLicense(365);
+    if (activeKey) {
+      setActiveLicenseKey(activeKey);
+    }
     setSuccessMsg(`⚡ License Extended! Added +365 Days to key '${activeKey || 'PRO-KEY'}'.`);
     setTimeout(() => {
       onActivated();
-    }, 600);
+    }, 400);
   };
 
   if (isValid === false) {

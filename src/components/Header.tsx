@@ -12,6 +12,7 @@ import {
   CloudUpload,
   CloudDownload,
   Loader2,
+  Key,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -20,6 +21,8 @@ interface HeaderProps {
   activeAccountsCount: number;
   pendingCount?: number;
   totalCount?: number;
+  licenseKey?: string;
+  onOpenLicenseModal?: () => void;
   onSendAllRemaining?: () => void;
   onBackupToCloud?: () => void;
   onRestoreFromCloud?: () => void;
@@ -33,6 +36,8 @@ export const Header: React.FC<HeaderProps> = ({
   activeAccountsCount,
   pendingCount = 0,
   totalCount = 0,
+  licenseKey = '',
+  onOpenLicenseModal,
   onSendAllRemaining,
   onBackupToCloud,
   onRestoreFromCloud,
@@ -155,32 +160,49 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </nav>
 
-          {/* Cloud Sync & Deploy Quick Buttons */}
+          {/* Cloud Sync & License Quick Buttons */}
           <div className="flex items-center gap-2 relative">
+            {/* License Key Quick Badge */}
+            {licenseKey && (
+              <button
+                onClick={onOpenLicenseModal}
+                title="Click to view or switch License Key"
+                className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+              >
+                <Key className="w-3.5 h-3.5 text-emerald-500" />
+                <span className="max-w-[110px] truncate">{licenseKey}</span>
+              </button>
+            )}
+
             {/* Cloud Sync Manual Trigger */}
             <div className="relative">
               <button
                 onClick={() => setShowCloudMenu(!showCloudMenu)}
                 disabled={isCloudSyncing}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 transition-colors shadow-sm cursor-pointer"
-                title="Manual Cloud Sync (Only on-demand)"
+                title="Cloud Sync (Automatic & Cross-Device)"
               >
                 {isCloudSyncing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
                 ) : (
                   <Cloud className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
                 )}
-                <span className="hidden sm:inline">Cloud Backup</span>
+                <span className="hidden sm:inline">Cloud Sync</span>
               </button>
 
               {showCloudMenu && (
                 <div
-                  className="absolute right-0 mt-2 w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-2 z-50 space-y-1"
+                  className="absolute right-0 mt-2 w-60 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl p-2 z-50 space-y-1"
                   onMouseLeave={() => setShowCloudMenu(false)}
                 >
                   <div className="px-2 py-1 text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                    On-Demand Cloud Sync
+                    Cross-Device Cloud Sync
                   </div>
+                  {licenseKey && (
+                    <div className="px-2 py-1 text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                      Key: <span className="font-bold text-emerald-600 dark:text-emerald-400">{licenseKey}</span>
+                    </div>
+                  )}
 
                   <button
                     onClick={() => {
@@ -203,8 +225,21 @@ export const Header: React.FC<HeaderProps> = ({
                     className="w-full text-left px-2.5 py-2 text-xs font-semibold rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/60 text-slate-800 dark:text-slate-200 flex items-center gap-2 transition-colors cursor-pointer"
                   >
                     <CloudDownload className="w-4 h-4 text-emerald-600" />
-                    <span>Restore from Cloud Backup</span>
+                    <span>Restore / Pull from Cloud</span>
                   </button>
+
+                  {onOpenLicenseModal && (
+                    <button
+                      onClick={() => {
+                        setShowCloudMenu(false);
+                        onOpenLicenseModal();
+                      }}
+                      className="w-full text-left px-2.5 py-2 text-xs font-semibold rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 flex items-center gap-2 transition-colors cursor-pointer border-t border-slate-100 dark:border-slate-800 pt-2 mt-1"
+                    >
+                      <Key className="w-4 h-4 text-amber-500" />
+                      <span>Switch / Extend License Key</span>
+                    </button>
+                  )}
                 </div>
               )}
             </div>

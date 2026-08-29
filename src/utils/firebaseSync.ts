@@ -69,6 +69,8 @@ export interface WorkspaceData {
   folders?: SavedFolder[];
   settings?: RunSettings;
   lastMessage?: string;
+  messageVariants?: string[];
+  chatMessages?: any[];
   updatedAt?: string;
 }
 
@@ -85,7 +87,7 @@ export function getActiveLicenseKey(): string {
 export function setActiveLicenseKey(key: string): void {
   try {
     if (key) {
-      localStorage.setItem(LICENSE_KEY_STORAGE_KEY, key.trim());
+      localStorage.setItem(LICENSE_KEY_STORAGE_KEY, key.trim().toUpperCase());
     } else {
       localStorage.removeItem(LICENSE_KEY_STORAGE_KEY);
     }
@@ -120,13 +122,15 @@ export async function fetchCloudWorkspace(licenseKey: string): Promise<Workspace
   }
 }
 
+let pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingSaveData: { licenseKey: string; data: Partial<WorkspaceData> } | null = null;
 let lastSaveTime = 0;
-const MIN_SAVE_INTERVAL_MS = 25000; // Throttle cloud writes to conserve daily free quota units
+const MIN_SAVE_THROTTLE_MS = 2500; // Efficient throttle to keep data in sync without quota strain
 
 /**
- * Safely trims SMS records to ensure the overall Firestore document payload stays comfortably under the 1MB limit (~700 KB max for records).
+ * Safely trims SMS records to ensure the overall Firestore document payload stays comfortably under the 1MB limit (~750 KB max for records).
  */
-function safeTrimRecordsForCloud(records: SmsRecord[], targetMaxBytes: number = 700000): SmsRecord[] {
+function safeTrimRecordsForCloud(records: SmsRecord[], targetMaxBytes: number = 750000): SmsRecord[] {
   if (!records || records.length === 0) return [];
 
   // Sanitize heavy strings in records if any
@@ -158,22 +162,47 @@ function safeTrimRecordsForCloud(records: SmsRecord[], targetMaxBytes: number = 
 /**
  * Save workspace data to cloud Firestore for a given license key.
  */
-export async function saveCloudWorkspace(licenseKey: string, data: Partial<WorkspaceData>, force: boolean = false): Promise<boolean> {
+export async function saveCloudWorkspace(
+  licenseKey: string,
+  data: Partial<WorkspaceData>,
+  force: boolean = false
+): Promise<boolean> {
   const cleanKey = licenseKey.trim().toUpperCase();
-  if (!cleanKey) return false;
+  if (!cleanKey || isFirestoreQuotaExceeded()) return false;
 
-  // If quota was previously exceeded, suppress background write attempts
-  if (isFirestoreQuotaExceeded()) {
-    return false;
-  }
-
-  // Throttle writes if not forced
   const now = Date.now();
-  if (!force && now - lastSaveTime < MIN_SAVE_INTERVAL_MS) {
-    return false;
-  }
-  lastSaveTime = now;
 
+  // If forced, immediately clear any pending timer and flush
+  if (force) {
+    if (pendingSaveTimer) {
+      clearTimeout(pendingSaveTimer);
+      pendingSaveTimer = null;
+      pendingSaveData = null;
+    }
+  } else {
+    // If not forced and called recently, schedule/queue trailing debounced save
+    if (now - lastSaveTime < MIN_SAVE_THROTTLE_MS) {
+      // Merge into pending
+      pendingSaveData = {
+        licenseKey: cleanKey,
+        data: { ...(pendingSaveData?.data || {}), ...data },
+      };
+
+      if (!pendingSaveTimer) {
+        pendingSaveTimer = setTimeout(async () => {
+          pendingSaveTimer = null;
+          if (pendingSaveData) {
+            const queued = pendingSaveData;
+            pendingSaveData = null;
+            await saveCloudWorkspace(queued.licenseKey, queued.data, true);
+          }
+        }, MIN_SAVE_THROTTLE_MS);
+      }
+      return true;
+    }
+  }
+
+  lastSaveTime = now;
   const docRef = doc(db, 'license_data', cleanKey);
 
   try {
@@ -189,7 +218,7 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
       updatePayload.accounts = data.accounts;
     }
     if (data.records !== undefined) {
-      updatePayload.records = safeTrimRecordsForCloud(data.records, 700000);
+      updatePayload.records = safeTrimRecordsForCloud(data.records, 750000);
     }
     if (data.folders !== undefined) {
       updatePayload.folders = data.folders;
@@ -199,6 +228,12 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
     }
     if (data.lastMessage !== undefined) {
       updatePayload.lastMessage = data.lastMessage;
+    }
+    if (data.messageVariants !== undefined) {
+      updatePayload.messageVariants = data.messageVariants;
+    }
+    if (data.chatMessages !== undefined) {
+      updatePayload.chatMessages = data.chatMessages;
     }
 
     // Deep clean undefined fields since Firestore setDoc throws when encountering undefined values
@@ -218,7 +253,6 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
       console.warn('⚡ Cloud document size exceeded 1MB limit. Performing emergency record trim for cloud sync.');
       if (data.records && data.records.length > 50) {
         try {
-          // Emergency retry: keep latest 250 records
           const emergencyRecords = data.records.slice(-250);
           const emergencyPayload: Record<string, any> = {
             licenseKey: cleanKey,
@@ -230,6 +264,8 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
           if (data.folders !== undefined) emergencyPayload.folders = data.folders;
           if (data.settings !== undefined) emergencyPayload.settings = data.settings;
           if (data.lastMessage !== undefined) emergencyPayload.lastMessage = data.lastMessage;
+          if (data.messageVariants !== undefined) emergencyPayload.messageVariants = data.messageVariants;
+          if (data.chatMessages !== undefined) emergencyPayload.chatMessages = data.chatMessages;
 
           const cleanEmergency = JSON.parse(JSON.stringify(emergencyPayload));
           await setDoc(docRef, cleanEmergency, { merge: true });
@@ -247,6 +283,37 @@ export async function saveCloudWorkspace(licenseKey: string, data: Partial<Works
     return false;
   }
 }
+
+/**
+ * Queue a debounced background save to Cloud Firestore for the active license.
+ */
+export function queueCloudWorkspaceSave(
+  licenseKey: string,
+  data: Partial<WorkspaceData>,
+  delayMs: number = 2000
+): void {
+  const cleanKey = licenseKey.trim().toUpperCase();
+  if (!cleanKey || isFirestoreQuotaExceeded()) return;
+
+  pendingSaveData = {
+    licenseKey: cleanKey,
+    data: { ...(pendingSaveData?.data || {}), ...data },
+  };
+
+  if (pendingSaveTimer) {
+    clearTimeout(pendingSaveTimer);
+  }
+
+  pendingSaveTimer = setTimeout(async () => {
+    pendingSaveTimer = null;
+    if (pendingSaveData) {
+      const queued = pendingSaveData;
+      pendingSaveData = null;
+      await saveCloudWorkspace(queued.licenseKey, queued.data, true);
+    }
+  }, delayMs);
+}
+
 
 /**
  * Subscribe to real-time changes in Firestore for a given license key.

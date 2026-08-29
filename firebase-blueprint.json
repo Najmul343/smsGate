@@ -3,17 +3,26 @@
     "license_data": {
       "title": "License Data Sync",
       "description": "Cloud synchronized user workspace state mapped by License Key",
+      "type": "object",
       "properties": {
         "licenseKey": { "type": "string" },
         "accountsText": { "type": "string" },
         "accounts": { "type": "array" },
         "records": { "type": "array" },
-        "folders": { "type": "array font" },
+        "folders": { "type": "array" },
         "settings": { "type": "object" },
         "lastMessage": { "type": "string" },
+        "messageVariants": { "type": "array" },
+        "chatMessages": { "type": "array" },
         "updatedAt": { "type": "string" }
       },
       "required": ["licenseKey", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/license_data/{licenseKey}": {
+      "schema": "license_data",
+      "description": "Cross-device user workspace and logs synchronized by active license key"
     }
   }
 }
